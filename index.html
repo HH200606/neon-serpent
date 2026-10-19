@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Neon Serpent · 霓虹贪吃蛇</title>
+<meta name="description" content="零依赖 Canvas 小游戏：霓虹风格的贪吃蛇，支持键盘、触屏滑动与手机方向键，纯前端离线可玩。">
+<meta name="theme-color" content="#070a12">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Neon Serpent · 霓虹贪吃蛇">
+<meta property="og:description" content="零依赖 Canvas 小游戏：霓虹风格贪吃蛇，键盘 / 触屏双支持。">
+<meta property="og:image" content="assets/screenshot.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23070a12'/%3E%3Cpath d='M7 23h11a4 4 0 0 0 0-8h-5a4 4 0 0 1 0-8h12' stroke='%2322d3ee' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<main class="app">
+
+  <header class="hud">
+    <div class="brand">
+      <span class="brand__mark" aria-hidden="true"></span>
+      <h1 class="brand__title">NEON<span>SERPENT</span></h1>
+    </div>
+
+    <div class="stats">
+      <div class="stat">
+        <span class="stat__label">分数</span>
+        <output class="stat__value" id="score" aria-live="polite">0</output>
+      </div>
+      <div class="stat">
+        <span class="stat__label">最高</span>
+        <output class="stat__value stat__value--muted" id="best">0</output>
+      </div>
+      <div class="stat stat--combo" id="comboWrap" hidden>
+        <span class="stat__label">连击</span>
+        <output class="stat__value stat__value--hot" id="combo">×1</output>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="icon-btn" id="soundBtn" type="button" aria-pressed="true" aria-label="音效开关" title="音效开关 (M)">🔊</button>
+      <button class="icon-btn" id="pauseBtn" type="button" aria-label="暂停或继续" title="暂停 / 继续 (空格)">⏸</button>
+    </div>
+  </header>
+
+  <section class="stage" id="stage">
+    <canvas id="board" width="720" height="720" role="img" aria-label="霓虹贪吃蛇游戏区域"></canvas>
+
+    <div class="overlay is-visible" id="overlay">
+      <div class="panel">
+        <p class="panel__kicker">NEON SERPENT</p>
+        <h2 class="panel__title" id="ovTitle">霓虹贪吃蛇</h2>
+        <p class="panel__text" id="ovText">
+          方向键 / WASD 控制方向，空格暂停。<br>
+          手机可以直接滑动屏幕，或使用下方方向键。
+        </p>
+        <button class="btn" id="ovBtn" type="button">开始游戏</button>
+        <p class="panel__hint">金色果实 +30 分 · 连续吃叠加连击（最高 ×5）</p>
+      </div>
+    </div>
+  </section>
+
+  <nav class="dpad" id="dpad" aria-label="方向控制">
+    <button class="dpad__btn dpad__btn--up"    type="button" data-dir="up"    aria-label="上">▲</button>
+    <button class="dpad__btn dpad__btn--left"  type="button" data-dir="left"  aria-label="左">◀</button>
+    <button class="dpad__btn dpad__btn--down"  type="button" data-dir="down"  aria-label="下">▼</button>
+    <button class="dpad__btn dpad__btn--right" type="button" data-dir="right" aria-label="右">▶</button>
+  </nav>
+
+  <footer class="foot">
+    <span>零依赖 · Canvas 2D · 可离线游玩</span>
+    <a href="https://github.com/HH200606/neon-serpent" rel="noopener">源码</a>
+  </footer>
+
+</main>
+
+<script src="js/game.js"></script>
+</body>
+</html>

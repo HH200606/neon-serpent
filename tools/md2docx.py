@@ -29,7 +29,7 @@ MUTED = RGBColor(0x8C, 0x82, 0x76)
 CINNABAR = RGBColor(0x9E, 0x3A, 0x2E)
 
 TITLE = None
-FOOTER = "产品需求文档 v1.0"
+FOOTER = None  # 缺省时从 frontmatter 的 version 推导，避免页脚和正文版本漂移
 
 LATIN = "Microsoft YaHei"
 EASTASIA = "微软雅黑"
@@ -74,7 +74,7 @@ def add_page_footer(doc):
     footer = section.footer
     p = footer.paragraphs[0]
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = p.add_run(f"{FOOTER}　·　第 ")
+    run = p.add_run(f"{FOOTER or '产品需求文档'}　·　第 ")
     run.font.size = Pt(8.5)
     run.font.color.rgb = MUTED
     set_eastasia(run, BODY_EASTASIA)
@@ -193,6 +193,20 @@ def fix_table_width(table):
 
 
 
+def read_frontmatter(lines):
+    """把文档开头的 YAML 头读成扁平 dict（只用于取 version 等简单字段）。"""
+    data = {}
+    if lines and lines[0].strip() == "---":
+        for j in range(1, len(lines)):
+            raw = lines[j]
+            if raw.strip() == "---":
+                break
+            if ":" in raw:
+                key, value = raw.split(":", 1)
+                data[key.strip()] = value.strip()
+    return data
+
+
 def strip_frontmatter(lines):
     """跳过文档开头的 YAML 头（给 agent 读的那部分不进 Word）。"""
     if lines and lines[0].strip() == "---":
@@ -285,18 +299,25 @@ def main(argv=None):
     ap.add_argument("--src", default=os.path.join(ROOT, "docs", "PRD.md"))
     ap.add_argument("--out", default=os.path.join(ROOT, "docs", "PRD.docx"))
     ap.add_argument("--title", default=None, help="封面标题；缺省取一级标题")
-    ap.add_argument("--footer", default=FOOTER, help="页脚前缀")
+    ap.add_argument("--footer", default=None, help="页脚前缀；缺省按 frontmatter 的 version 生成")
     a = ap.parse_args(argv)
     SRC, OUT, TITLE, FOOTER = a.src, a.out, a.title, a.footer
     build()
 
 
 def build():
+    global FOOTER
     with open(SRC, encoding="utf-8") as fh:
         lines = fh.read().splitlines()
 
+    meta = read_frontmatter(lines)
     lines = strip_frontmatter(lines)
     TOC = collect_toc(lines)
+
+    if FOOTER is None:
+        version = meta.get("version", "")
+        short = ".".join(version.split(".")[:2]) if version else ""
+        FOOTER = f"产品需求文档 v{short}" if short else "产品需求文档"
 
     doc = Document()
     section = doc.sections[0]

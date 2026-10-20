@@ -902,6 +902,9 @@
 
   analytics.track('page_view', { ref: document.referrer || '', demo: isDemo });
 
+  // 一眼确认跑的是哪一版：线上缓存/旧标签页是这次排查的坑
+  console.info('[neon-serpent] build v1.2 · audio2 · sfx=0.13-0.20 · limiter=-12dBFS');
+
   if (isDemo) startGame();
 
   requestAnimationFrame((t) => {

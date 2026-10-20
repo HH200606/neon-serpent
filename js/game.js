@@ -57,6 +57,7 @@
   const comboEl = $('combo');
   const comboWrap = $('comboWrap');
   const soundBtn = $('soundBtn');
+  const audioHint = $('audioHint');
   const pauseBtn = $('pauseBtn');
   const dpad = $('dpad');
 
@@ -106,7 +107,15 @@
 
   const run = { startedAt: 0, activeMs: 0, comboMax: 1, overAt: 0, bestAtStart: 0, pausedAt: 0 };
 
-  const audio = { ctx: null, muted: store.readMuted(), unlocked: false };
+  const audio = {
+    ctx: null,
+    master: null,      // -12 dBFS 限幅器（NFR-6 峰值上限）
+    muted: store.readMuted(),
+    unlocked: false,
+    played: 0,         // 实际排出来的音效个数，供端到端断言 / 诊断
+    blocked: false,    // 浏览器拦了声音（上下文不是 running）
+    pending: null,     // 被拦下的那次音效，解锁后补播
+  };
 
   function durationSec() {
     return Math.round(run.activeMs / 100) / 10;
@@ -272,13 +281,43 @@
       if (!AC) return null;
       try {
         audio.ctx = new AC();
+        installMaster();
       } catch {
         return null;
       }
     }
     // 暂停中不唤醒上下文（FR-6.3）
-    if (audio.ctx.state === 'suspended' && game.mode !== 'paused') audio.ctx.resume().catch(() => {});
+    if (audio.ctx.state !== 'running' && game.mode !== 'paused') {
+      const resuming = audio.ctx.resume();
+      if (resuming && typeof resuming.then === 'function') {
+        resuming.then(() => {
+          if (audio.ctx && audio.ctx.state === 'running') {
+            audio.blocked = false;
+            syncAudioHint();
+            const pending = audio.pending;
+            audio.pending = null;
+            if (pending) blip(pending);
+          }
+        }).catch(() => {
+          audio.blocked = true;
+          syncAudioHint();
+        });
+      }
+    }
     return audio.ctx;
+  }
+
+  /** 所有音效先过限幅器再进扬声器，保证峰值不超过 NFR-6 的 -12 dBFS。 */
+  function installMaster() {
+    if (!audio.ctx || audio.master) return;
+    const comp = audio.ctx.createDynamicsCompressor();
+    comp.threshold.value = -12;
+    comp.knee.value = 0;
+    comp.ratio.value = 20;
+    comp.attack.value = 0.003;
+    comp.release.value = 0.25;
+    comp.connect(audio.ctx.destination);
+    audio.master = comp;
   }
 
   function suspendAudio() {
@@ -293,10 +332,27 @@
     } catch { /* 忽略 */ }
   }
 
-  function blip({ freq = 440, to = 0, dur = 0.12, type = 'sine', gain = 0.05 }) {
+  function blip(params) {
+    const { freq = 440, to = 0, dur = 0.12, type = 'sine', gain = 0.14 } = params;
     if (audio.muted || game.mode === 'paused') return; // 暂停期间不要有音效残留
+
     const ac = ensureAudio();
     if (!ac) return;
+
+    // 上下文还没跑起来（浏览器拦截 / 移动端首次解锁）：记下这次音效，解锁后补播
+    if (ac.state !== 'running') {
+      audio.pending = params;
+      if (!audio.blocked) {
+        audio.blocked = true;
+        syncAudioHint();
+      }
+      return;
+    }
+
+    if (audio.blocked) {
+      audio.blocked = false;
+      syncAudioHint();
+    }
 
     const osc = ac.createOscillator();
     const amp = ac.createGain();
@@ -310,19 +366,21 @@
     amp.gain.exponentialRampToValueAtTime(gain, t0 + 0.012);
     amp.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
 
-    osc.connect(amp).connect(ac.destination);
+    osc.connect(amp).connect(audio.master || ac.destination);
     osc.start(t0);
     osc.stop(t0 + dur + 0.03);
+    audio.played += 1;
   }
 
-  function playStart() { blip({ freq: 380, to: 620, dur: 0.16, type: 'triangle', gain: 0.045 }); }
-  function playEat() { blip({ freq: 520, to: 760, dur: 0.10, type: 'square', gain: 0.035 }); }
+  // 电平按 NFR-6 的预算（峰值 ≤ -12 dBFS）取值，避免短促提示音在普通扬声器上听不见
+  function playStart() { blip({ freq: 380, to: 620, dur: 0.16, type: 'triangle', gain: 0.18 }); }
+  function playEat() { blip({ freq: 520, to: 760, dur: 0.10, type: 'square', gain: 0.14 }); }
   function playBonus() {
-    blip({ freq: 660, dur: 0.09, type: 'triangle', gain: 0.045 });
-    setTimeout(() => blip({ freq: 880, dur: 0.09, type: 'triangle', gain: 0.045 }), 80);
-    setTimeout(() => blip({ freq: 1180, dur: 0.12, type: 'triangle', gain: 0.045 }), 160);
+    blip({ freq: 660, dur: 0.09, type: 'triangle', gain: 0.13 });
+    setTimeout(() => blip({ freq: 880, dur: 0.09, type: 'triangle', gain: 0.13 }), 80);
+    setTimeout(() => blip({ freq: 1180, dur: 0.12, type: 'triangle', gain: 0.13 }), 160);
   }
-  function playDie() { blip({ freq: 240, to: 55, dur: 0.42, type: 'sawtooth', gain: 0.05 }); }
+  function playDie() { blip({ freq: 240, to: 55, dur: 0.42, type: 'sawtooth', gain: 0.2 }); }
 
   function toggleSound() {
     audio.muted = !audio.muted;
@@ -338,6 +396,23 @@
   function syncSoundButton() {
     soundBtn.textContent = audio.muted ? '🔇' : '🔊';
     soundBtn.setAttribute('aria-pressed', String(!audio.muted));
+    syncAudioHint();
+  }
+
+  /** 静音或被浏览器拦截时给一句文字提示：声音问题不该只能靠猜。 */
+  function syncAudioHint() {
+    if (!audioHint) return;
+    const blocked = !audio.muted && audio.blocked;
+    audioHint.hidden = !(audio.muted || blocked);
+    if (audio.muted) {
+      audioHint.textContent = '音效已关闭';
+      audioHint.title = '按 M 或点右上角喇叭开启音效';
+    } else if (blocked) {
+      audioHint.textContent = '点一下开启音效';
+      audioHint.title = '浏览器拦截了自动播放，点一下页面即可开启';
+    } else {
+      audioHint.title = '';
+    }
   }
 
   /* ------------------------------- 6. 输入 --------------------------------- */
@@ -735,6 +810,13 @@
     best: () => best,
     mode: () => game.mode,
     audioState: () => (audio.ctx ? audio.ctx.state : 'none'),
+    soundCount: () => audio.played,
+    muted: () => audio.muted,
+    audioBlocked: () => audio.blocked,
+    // 诊断用：限幅器在不在、阈值是多少（NFR-6 峰值上限 -12 dBFS）
+    audioMaster: () => (audio.master
+      ? { threshold: audio.master.threshold.value, ratio: audio.master.ratio.value }
+      : null),
   };
 
   /* ---------------------------- 9. 演示模式 --------------------------------- */

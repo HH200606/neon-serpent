@@ -126,7 +126,22 @@ body {
 
 .actions {
   display: flex;
+  align-items: center;
   gap: 8px;
+}
+
+.audio-hint {
+  font-size: 11px;
+  line-height: 1;
+  padding: 6px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+  max-width: 132px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--gold);
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.4);
 }
 
 .icon-btn {
@@ -306,6 +321,12 @@ body {
   .actions { grid-area: actions; }
 
   .brand__title { font-size: 13.5px; letter-spacing: 0.12em; white-space: nowrap; }
+
+  .audio-hint {
+    font-size: 10px;
+    padding: 5px 7px;
+    max-width: 30vw;
+  }
 }
 
 @media (hover: none) and (pointer: coarse) {

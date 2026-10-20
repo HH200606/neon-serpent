@@ -522,6 +522,78 @@ async function scenarioDemoSoak(browser, base) {
   await page.close();
 }
 
+async function scenarioAudio(browser, base) {
+  console.log('\n[S8] 音效：能发声、静音可感知、状态可诊断');
+  const page = await openPage(browser, `${base}/index.html`);
+  await page.waitFor('!!window.NeonSerpent');
+
+  check('S8.1 冷启动不创建音频实例', (await page.eval('NeonSerpent.audioState()')) === 'none');
+
+  await page.key(' ');
+  await page.waitFor(`NeonSerpent.mode() === 'playing'`);
+  const startSounds = await page.eval('NeonSerpent.soundCount()');
+  check('S8.2 开局播放音效', startSounds >= 1, `soundCount=${startSounds}`);
+  check('S8.3 开局后音频上下文在运行', (await page.eval('NeonSerpent.audioState()')) === 'running', await page.eval('NeonSerpent.audioState()'));
+
+  await page.eval(`(() => { const s = NeonSerpent.state(); const h = s.snake[0]; s.fruit = { x: h.x + s.dir.x, y: h.y + s.dir.y }; })()`);
+  await page.waitFor('NeonSerpent.soundCount() > 1', 4000);
+  check('S8.4 吃到果实播放音效', true);
+
+  await page.key('m');
+  const mutedCount = await page.eval('NeonSerpent.soundCount()');
+  check('S8.5 静音后 HUD 有文字提示', await page.eval(`document.getElementById('audioHint').hidden === false`));
+
+  await page.eval(`(() => { const s = NeonSerpent.state(); const h = s.snake[0]; s.fruit = { x: h.x + s.dir.x, y: h.y + s.dir.y }; })()`);
+  await sleep(600);
+  check('S8.6 静音时不发声', (await page.eval('NeonSerpent.soundCount()')) === mutedCount, `before=${mutedCount} after=${await page.eval('NeonSerpent.soundCount()')}`);
+  check('S8.7 音效流程控制台零 error', page.errors.length === 0, page.errors.join(' | '));
+  await page.close();
+
+  const page2 = await openPage(browser, `${base}/index.html`);
+  await page2.waitFor('!!window.NeonSerpent');
+  await page2.eval(`localStorage.setItem('neon-serpent:muted', '1')`);
+  await page2.goto(`${base}/index.html`);
+  await page2.waitFor('!!window.NeonSerpent');
+
+  check('S8.8 静音状态刷新后保留', (await page2.eval('NeonSerpent.muted()')) === true);
+  check('S8.9 静音冷启动页面有提示', await page2.eval(`document.getElementById('audioHint').hidden === false`));
+  check('S8.10 静音冷启动不创建音频实例', (await page2.eval('NeonSerpent.audioState()')) === 'none');
+
+  await page2.key('m');
+  await page2.waitFor(`NeonSerpent.audioState() === 'running'`, 3000);
+  check('S8.11 取消静音后提示消失', await page2.eval(`document.getElementById('audioHint').hidden === true`));
+  check('S8.12 取消静音后会发声', (await page2.eval('NeonSerpent.soundCount()')) >= 1);
+
+  const master = await page2.eval('NeonSerpent.audioMaster()');
+  check('S8.13 音效经过 -12 dBFS 限幅器（NFR-6）', !!master && master.threshold === -12, JSON.stringify(master));
+
+  await page2.close();
+}
+
+async function scenarioAudioMobile(browser, base) {
+  console.log('\n[S9] 375px + 静音提示不撑破布局');
+  const page = await openPage(browser, `${base}/index.html`, {
+    width: 375, height: 667, deviceScaleFactor: 2, mobile: true, touch: true,
+  });
+  await page.waitFor('!!window.NeonSerpent');
+  await page.eval(`localStorage.setItem('neon-serpent:muted', '1')`);
+  await page.goto(`${base}/index.html`);
+  await page.waitFor('!!window.NeonSerpent');
+  await sleep(300);
+
+  const layout = await page.eval(`(() => ({
+    hintVisible: document.getElementById('audioHint').hidden === false,
+    scrollWidth: document.documentElement.scrollWidth,
+    innerWidth: window.innerWidth,
+  }))()`);
+
+  check('S9.1 静音提示在小屏可见', layout.hintVisible === true);
+  check('S9.2 提示条不导致横向滚动', layout.scrollWidth <= layout.innerWidth + 1, JSON.stringify(layout));
+
+  await page.screenshot(path.join(ARTIFACTS, '375-muted.png'));
+  await page.close();
+}
+
 /* --------------------------------- 主流程 -------------------------------- */
 
 async function main() {
@@ -538,6 +610,8 @@ async function main() {
     await scenarioMobile(browser, base);
     await scenarioDemo(browser, base);
     await scenarioPauseVisibility(browser, base);
+    await scenarioAudio(browser, base);
+    await scenarioAudioMobile(browser, base);
     await scenarioOgShot(browser, base);
     if (process.argv.includes('--soak')) await scenarioDemoSoak(browser, base);
   } finally {

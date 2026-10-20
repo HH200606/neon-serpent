@@ -76,7 +76,8 @@
     let events = load(storage);
 
     function readAll(readOpts) {
-      const includeDemo = !readOpts || readOpts.includeDemo !== false;
+      // 默认不返回 demo 事件（FR-8.2）：分析前先过滤，显式 includeDemo:true 才拿到全部
+      const includeDemo = !!readOpts && readOpts.includeDemo === true;
       const list = includeDemo ? events : events.filter((e) => !e.demo);
       return list.map((e) => ({ ...e }));
     }
@@ -98,8 +99,8 @@
 
       readAll,
 
-      exportJson() {
-        return JSON.stringify(readAll(), null, 2);
+      exportJson(readOpts) {
+        return JSON.stringify(readAll(readOpts), null, 2);
       },
 
       clear() {

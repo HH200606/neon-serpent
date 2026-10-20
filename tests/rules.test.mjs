@@ -1,6 +1,6 @@
 /* =============================================================================
    规则层单测 · FR-0.2 / T-1 ~ T-6
-   跑法：node --test tests/
+   跑法：node --test "tests/*.test.mjs"
    ========================================================================== */
 
 import test from 'node:test';
@@ -76,6 +76,45 @@ test('T-3 间隔超过 2600ms 再吃，倍率回到 ×1', () => {
   assert.equal(s.score - before, 10);
 });
 
+test('暂停平移计时器后，连击窗口不被暂停吃掉（FR-6.1）', () => {
+  const s = mk();
+  fruitAhead(s);
+  tick(s, 0);
+  assert.equal(s.combo, 1);
+
+  rules.shiftTimers(s, 3000); // 暂停 3 秒
+  fruitAhead(s);
+  const result = tick(s, 3200); // 真实时间过了 3200ms，有效间隔只有 200ms
+
+  assert.equal(s.combo, 2);
+  assert.equal(result.score, 30);
+});
+
+test('暂停平移计时器后，金果实寿命不被暂停吃掉', () => {
+  const s = mk();
+  const h = head(s);
+  s.bonus = { x: h.x + 1, y: h.y, bornAt: 0, dieAt: 9000 };
+
+  assert.equal(rules.shiftTimers(s, 5000), true);
+  assert.equal(s.bonus.dieAt, 14000);
+  assert.equal(s.bonus.bornAt, 5000);
+  assert.equal(rules.expireBonus(s, 13000), false);
+  assert.equal(rules.expireBonus(s, 14001), true);
+});
+
+test('平移计时器对无效增量和空状态是 no-op', () => {
+  const s = mk();
+  assert.equal(s.lastEatAt, null);
+  assert.equal(rules.shiftTimers(s, 0), false);
+  assert.equal(rules.shiftTimers(s, -10), false);
+  assert.equal(s.lastEatAt, null);
+
+  fruitAhead(s);
+  tick(s, 100);
+  assert.equal(rules.shiftTimers(s, 500), true);
+  assert.equal(s.lastEatAt, 600);
+});
+
 test('连击窗口边界：恰好 2600ms 仍算连击', () => {
   const s = mk();
   fruitAhead(s);
@@ -134,6 +173,18 @@ test('同一逻辑步内只接受第一个有效转向', () => {
   tick(s, 0);
   assert.equal(s.dir, rules.DIRS.up);
   assert.equal(rules.queueDirection(s, 'left'), true, '下一步恢复接收转向');
+});
+
+test('转向排队不依赖方向对象的身份', () => {
+  const s = mk();
+  // 外部只替换 dir（新对象）时，仍应能正常排队转向
+  s.dir = { x: 1, y: 0 };
+  s.nextDir = { x: 1, y: 0 };
+
+  assert.equal(rules.queueDirection(s, 'up'), true);
+  tick(s, 0);
+  assert.equal(s.dir, rules.DIRS.up);
+  assert.equal(rules.queueDirection(s, 'left'), true);
 });
 
 /* ------------------------------- T-6 ------------------------------------- */

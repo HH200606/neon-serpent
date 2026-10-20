@@ -83,9 +83,8 @@
 
   function safeStorage() {
     try {
-      const probe = '__neon__';
-      window.localStorage.setItem(probe, probe);
-      window.localStorage.removeItem(probe);
+      // 只做读探测：配额满时写会抛，但不该因此丢掉已有最高分（FR-7.5）
+      window.localStorage.getItem('__neon_probe__');
       return window.localStorage;
     } catch {
       return null;
@@ -105,7 +104,7 @@
   game.shake = 0;
   game.dieAt = 0;
 
-  const run = { startedAt: 0, activeMs: 0, comboMax: 1, overAt: 0 };
+  const run = { startedAt: 0, activeMs: 0, comboMax: 1, overAt: 0, bestAtStart: 0, pausedAt: 0 };
 
   const audio = { ctx: null, muted: store.readMuted(), unlocked: false };
 
@@ -145,11 +144,13 @@
     run.startedAt = performance.now();
     run.comboMax = 1;
     run.overAt = 0;
+    run.pausedAt = 0;
+    run.bestAtStart = best;
 
     hideOverlay();
     syncHud();
     syncPauseButton();
-    ensureAudio();
+    if (!audio.muted) ensureAudio();
     playStart();
 
     analytics.track('run_start', { source: referrerSource(), demo: isDemo });
@@ -159,11 +160,16 @@
     if (game.mode === 'playing') {
       game.mode = 'paused';
       game.acc = 0;               // 恢复时不跳步（FR-6.1）
+      run.pausedAt = performance.now();
       suspendAudio();             // 暂停期间不留音效（FR-6.3）
       showOverlay({ title: '已暂停', html: '喝口水，回来继续。', button: '继续游戏' });
     } else if (game.mode === 'paused') {
+      const delta = run.pausedAt ? performance.now() - run.pausedAt : 0;
       game.mode = 'playing';
       game.acc = 0;
+      run.pausedAt = 0;
+      // 暂停冻结连击窗口与金果实寿命（FR-6.1）
+      if (delta > 0) R.shiftTimers(game, delta);
       resumeAudio();
       hideOverlay();
     }
@@ -227,7 +233,8 @@
     game.mode = 'over';
     run.overAt = now;
 
-    const isNewBest = !isDemo && game.score > best && game.score > 0;
+    // onEat 已经把 best 抬到本局分数，所以要和开局时的记录比，才是“本局是否破纪录”
+    const isNewBest = !isDemo && game.score > run.bestAtStart && game.score > 0;
     if (isNewBest) {
       best = game.score;
       store.writeBest(best);
@@ -269,7 +276,8 @@
         return null;
       }
     }
-    if (audio.ctx.state === 'suspended') audio.ctx.resume().catch(() => {});
+    // 暂停中不唤醒上下文（FR-6.3）
+    if (audio.ctx.state === 'suspended' && game.mode !== 'paused') audio.ctx.resume().catch(() => {});
     return audio.ctx;
   }
 
@@ -286,7 +294,7 @@
   }
 
   function blip({ freq = 440, to = 0, dur = 0.12, type = 'sine', gain = 0.05 }) {
-    if (audio.muted) return;
+    if (audio.muted || game.mode === 'paused') return; // 暂停期间不要有音效残留
     const ac = ensureAudio();
     if (!ac) return;
 
@@ -321,7 +329,7 @@
     store.writeMuted(audio.muted);
     analytics.track('mute_toggle', { muted: audio.muted });
     syncSoundButton();
-    if (!audio.muted) {
+    if (!audio.muted && game.mode !== 'paused') {
       ensureAudio();
       playEat();
     }
@@ -686,8 +694,9 @@
   function trackFrame(dt) {
     frameSeq += 1;
     frameLog.push(dt);
-    if (frameLog.length > 180) frameLog.shift();
-    if (frameSeq % 60 !== 0 || frameLog.length < 30) return;
+    if (frameLog.length > 300) frameLog.shift();
+    // 约每 10 秒（600 帧）报一次，避免 frame_stats 把 500 条事件槽挤满
+    if (frameSeq % 600 !== 0 || frameLog.length < 60) return;
 
     const sorted = [...frameLog].sort((a, b) => a - b);
     const p95 = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))];
@@ -708,9 +717,9 @@
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
-  // 本地聚合 → 手动导出（PRD 11.2）；分析前默认过滤 demo 事件（FR-8.2）
+  // 本地聚合 → 手动导出（PRD 11.2）；默认过滤 demo 事件（FR-8.2）
   window.NeonStats = {
-    events: (opts) => analytics.readAll(opts || { includeDemo: false }),
+    events: (opts) => analytics.readAll(opts || {}),
     export: (includeDemo = false) => {
       const data = analytics.readAll({ includeDemo });
       downloadJson(`neon-serpent-events-${Date.now()}.json`, JSON.stringify(data, null, 2));
@@ -725,6 +734,7 @@
     state: () => game,
     best: () => best,
     mode: () => game.mode,
+    audioState: () => (audio.ctx ? audio.ctx.state : 'none'),
   };
 
   /* ---------------------------- 9. 演示模式 --------------------------------- */

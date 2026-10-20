@@ -50,4 +50,4 @@ if (total > max) {
   console.error(`FAIL: 首屏 ${total} 字节，超过阈值 ${max}（NFR-3 / AC-2）`);
   process.exit(1);
 }
-console.log('PASS: 首屏体积在阈值内（AC-2）');
+if (!args.has('json')) console.log('PASS: 首屏体积在阈值内（AC-2）');

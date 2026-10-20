@@ -29,6 +29,8 @@ function files(dir, exts, out = []) {
 
 const targets = ['index.html', ...files('css', ['.css']), ...files('js', ['.js'])];
 const URL_RE = /https?:\/\/[^\s"'<>()]+/gi;
+// 协议相对地址（//host/path）同样会发请求，单独扫一遍
+const PROTOCOL_REL_RE = /(?:["'(]|url\()\s*\/\/[a-z0-9-]+(?:\.[a-z0-9-]+)+(?=[/:"')])/gi;
 
 const findings = [];
 for (const rel of targets) {
@@ -38,6 +40,10 @@ for (const rel of targets) {
     if (ALLOW.some((re) => re.test(url))) continue;
     const line = text.slice(0, match.index).split('\n').length;
     findings.push({ file: rel, line, url });
+  }
+  for (const match of text.matchAll(PROTOCOL_REL_RE)) {
+    const line = text.slice(0, match.index).split('\n').length;
+    findings.push({ file: rel, line, url: match[0].trim() });
   }
 }
 

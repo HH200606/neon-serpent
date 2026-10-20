@@ -281,7 +281,7 @@ body {
   margin: 0;
   font-size: 11px;
   line-height: 1.6;
-  color: rgba(139, 151, 173, 0.62);
+  color: var(--muted);
 }
 
 .foot a { color: var(--muted); text-decoration: none; border-bottom: 1px dotted rgba(139, 151, 173, 0.5); }

@@ -82,6 +82,7 @@
       prevSnake: [],
       dir: DIRS.right,
       nextDir: DIRS.right,
+      pendingTurn: false,
       fruit: null,
       bonus: null,
       score: 0,
@@ -165,9 +166,10 @@
     const cur = state.dir;
     if (d.x === -cur.x && d.y === -cur.y) return false;
     if (d.x === cur.x && d.y === cur.y) return false;
-    if (state.nextDir !== cur) return false;
+    if (state.pendingTurn) return false;
 
     state.nextDir = d;
+    state.pendingTurn = true;
     return true;
   }
 
@@ -224,6 +226,7 @@
 
     state.prevSnake = snapshot(state.snake);
     state.dir = state.nextDir;
+    state.pendingTurn = false;
 
     const head = state.snake[0];
     const nx = head.x + state.dir.x;
@@ -272,6 +275,17 @@
     return false;
   }
 
+  /** 暂停恢复后把依赖绝对时间的计时器整体后移，避免暂停吃掉连击窗口 / 金果实寿命。 */
+  function shiftTimers(state, delta) {
+    if (!(delta > 0)) return false;
+    if (state.lastEatAt !== null) state.lastEatAt += delta;
+    if (state.bonus) {
+      state.bonus.bornAt += delta;
+      state.bonus.dieAt += delta;
+    }
+    return true;
+  }
+
   /** 连击窗口过期把倍率复位；返回是否发生（供 HUD 同步用）。 */
   function refreshCombo(state, now) {
     if (state.lastEatAt === null) return false;
@@ -293,6 +307,7 @@
     stepMsFor,
     tick,
     expireBonus,
+    shiftTimers,
     refreshCombo,
     progress: clampProgress,
   };

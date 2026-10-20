@@ -58,10 +58,13 @@ test('FR-8.2 demo 事件带 demo=true，分析时可整体过滤', () => {
   const realLog = analytics.createAnalytics({ storage, demo: false, clock: () => 2 });
   realLog.track('run_start', { source: 'direct' });
 
-  assert.equal(realLog.readAll().length, 3);
-  const realOnly = realLog.readAll({ includeDemo: false });
-  assert.equal(realOnly.length, 1);
+  assert.equal(realLog.readAll({ includeDemo: true }).length, 3);
+  const realOnly = realLog.readAll();
+  assert.equal(realOnly.length, 1, '默认不返回 demo 事件');
   assert.equal(realOnly[0].demo, false);
+
+  assert.equal(JSON.parse(realLog.exportJson()).length, 1, '导出默认也过滤 demo');
+  assert.equal(JSON.parse(realLog.exportJson({ includeDemo: true })).length, 3);
 });
 
 test('超过上限时丢最旧的事件', () => {

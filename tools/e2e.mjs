@@ -76,10 +76,13 @@ class Cdp {
 
   static async connect(url) {
     const ws = new WebSocket(url);
-    await new Promise((resolve, reject) => {
-      ws.addEventListener('open', resolve, { once: true });
-      ws.addEventListener('error', () => reject(new Error(`WebSocket 连接失败：${url}`)), { once: true });
-    });
+    await Promise.race([
+      new Promise((resolve, reject) => {
+        ws.addEventListener('open', resolve, { once: true });
+        ws.addEventListener('error', () => reject(new Error(`WebSocket 连接失败：${url}`)), { once: true });
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error(`WebSocket 连接超时：${url}`)), 10000)),
+    ]);
     return new Cdp(ws);
   }
 
@@ -152,6 +155,7 @@ async function launchBrowser() {
     '--no-first-run',
     '--no-default-browser-check',
     '--mute-audio',
+    '--autoplay-policy=no-user-gesture-required',
     '--remote-debugging-port=0',
     `--user-data-dir=${userDir}`,
     'about:blank',
@@ -308,7 +312,7 @@ async function scenarioKeyboard(browser, base) {
   check('S2.1 空格开局', true);
 
   await page.key('ArrowUp');
-  await sleep(400);
+  await page.waitFor('NeonSerpent.state().dir.y === -1', 4000);
   const dir = await page.eval('NeonSerpent.state().dir');
   check('S2.2 方向键生效', dir.x === 0 && dir.y === -1, JSON.stringify(dir));
 
@@ -338,7 +342,29 @@ async function scenarioKeyboard(browser, base) {
   await page.key(' ');
   await page.waitFor(`NeonSerpent.mode() === 'playing'`);
   check('S2.6 再按空格恢复', true);
-  check('S2.7 键盘流程控制台零 error', page.errors.length === 0, page.errors.join(' | '));
+
+  // 撞墙结束，验证首次破纪录时 run_end.isNewBest 是真的
+  await page.eval(`(() => {
+    const s = NeonSerpent.state();
+    s.snake = [{ x: 23, y: 12 }, { x: 22, y: 12 }, { x: 21, y: 12 }];
+    s.prevSnake = s.snake.map((c) => ({ ...c }));
+    s.dir = s.nextDir = { x: 1, y: 0 };
+  })()`);
+  await page.waitFor(`NeonSerpent.mode() === 'over'`, 8000);
+
+  const end = await page.eval(`(() => {
+    const list = NeonStats.events();
+    const runEnd = list.filter((e) => e.e === 'run_end').pop() || {};
+    return {
+      isNewBest: runEnd.isNewBest,
+      runScore: runEnd.score,
+      stored: Number(localStorage.getItem('neon-serpent:best') || 0),
+      hud: document.getElementById('best').textContent,
+    };
+  })()`);
+  check('S2.7 首次破纪录时 run_end.isNewBest = true', end.isNewBest === true, JSON.stringify(end));
+  check('S2.8 最高分与结算一致', end.stored === end.runScore && end.hud === String(end.stored), JSON.stringify(end));
+  check('S2.9 键盘流程控制台零 error', page.errors.length === 0, page.errors.join(' | '));
 
   await page.close();
 }
@@ -420,23 +446,37 @@ async function scenarioDemo(browser, base) {
 }
 
 async function scenarioPauseVisibility(browser, base) {
-  console.log('\n[S5] 切后台自动暂停（FR-6.2）');
+  console.log('\n[S5] 暂停：切后台自动暂停（FR-6.2）与音效挂起（FR-6.3）');
   const page = await openPage(browser, `${base}/index.html`);
   await page.waitFor('!!window.NeonSerpent');
 
   await page.key(' ');
   await page.waitFor(`NeonSerpent.mode() === 'playing'`);
+  check('S5.1 开局后音频上下文在运行', await page.eval(`NeonSerpent.audioState() === 'running'`), await page.eval('NeonSerpent.audioState()'));
 
   await page.eval(`Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
     document.dispatchEvent(new Event('visibilitychange'));`);
   await page.waitFor(`NeonSerpent.mode() === 'paused'`, 3000);
-  check('S5.1 隐藏页面自动暂停', true);
+  check('S5.2 隐藏页面自动暂停', true);
+  check('S5.3 暂停期间音频上下文被挂起', await page.eval(`NeonSerpent.audioState() === 'suspended'`), await page.eval('NeonSerpent.audioState()'));
+
+  // 暂停里按 M 两次（静音→取消静音）不应唤醒音频
+  await page.key('m');
+  await page.key('m');
+  await sleep(300);
+  check('S5.4 暂停中切换音效不唤醒音频', await page.eval(`NeonSerpent.audioState() === 'suspended'`), await page.eval('NeonSerpent.audioState()'));
 
   await page.eval(`Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
     document.dispatchEvent(new Event('visibilitychange'));`);
   await sleep(200);
   const mode = await page.eval('NeonSerpent.mode()');
-  check('S5.2 返回页面仍处于暂停（不自动开局）', mode === 'paused', `mode=${mode}`);
+  check('S5.5 返回页面仍处于暂停（不自动开局）', mode === 'paused', `mode=${mode}`);
+
+  await page.key(' ');
+  await page.waitFor(`NeonSerpent.mode() === 'playing'`);
+  await page.waitFor(`NeonSerpent.audioState() === 'running'`, 3000)
+    .then(() => check('S5.6 继续后音频恢复', true))
+    .catch(async () => check('S5.6 继续后音频恢复', false, await page.eval('NeonSerpent.audioState()')));
 
   await page.close();
 }
@@ -501,10 +541,12 @@ async function main() {
     await scenarioOgShot(browser, base);
     if (process.argv.includes('--soak')) await scenarioDemoSoak(browser, base);
   } finally {
+    // 先用 CDP 优雅关闭（Windows 上 child.kill() 不是树杀），再兜底
+    await browser.cdp.send('Browser.close').catch(() => {});
     browser.cdp.close();
     browser.child.kill();
     server.close();
-    await sleep(200);
+    await sleep(500);
     try { rmSync(browser.userDir, { recursive: true, force: true }); } catch { /* 忽略 */ }
   }
 

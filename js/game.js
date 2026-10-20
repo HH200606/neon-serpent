@@ -3,44 +3,46 @@
    -----------------------------------------------------------------------------
    零依赖 / 纯 Canvas 2D / 可离线运行。
 
+   本文件只做「装配 + 表现」：
+     - 规则：js/rules.js      （纯逻辑，Node 可测）
+     - 存档：js/store.js      （demo 会话不写最高分）
+     - 埋点：js/analytics.js  （本地聚合，demo 事件可过滤）
+   渲染、音效、输入、界面状态留在这一层。
+
    结构：
-     1. 配置与状态
-     2. 画布自适应（DPR）
-     3. 游戏逻辑（固定步长 + 渲染插值）
-     4. 绘制层
-     5. 音效（WebAudio 合成，无音频文件）
-     6. 输入（键盘 / 滑动 / 方向键）
-     7. 界面状态（开始 / 暂停 / 结束）
-     8. 主循环
+      1. 依赖与配置
+      2. DOM 与画布
+      3. 运行状态
+      4. 一局的生命周期（开始 / 暂停 / 死亡 / 结算）
+      5. 音效（WebAudio 合成，无音频文件）
+      6. 输入（键盘 / 滑动 / 方向键）
+      7. 粒子与绘制
+      8. HUD / 覆盖层 / 埋点出口
+      9. 主循环
    ========================================================================== */
 
 (() => {
   'use strict';
 
-  /* ------------------------------ 1. 配置 ---------------------------------- */
+  /* --------------------------- 1. 依赖与配置 -------------------------------- */
 
-  const CFG = {
-    cols: 24,
-    rows: 24,
-    baseStep: 150,      // 初始每步毫秒数
-    minStep: 76,        // 最快
-    speedUp: 0.978,     // 每吃一个果实加速比例
-    comboWindow: 2600,  // 连击有效窗口（毫秒）
-    comboMax: 5,
-    bonusEvery: 5,      // 每吃 N 个果实出现一次金色果实
-    bonusLife: 9000,
-  };
+  const R = window.NeonRules;
+  const S = window.NeonStore;
+  const A = window.NeonAnalytics;
 
-  const DIRS = {
-    up: { x: 0, y: -1 },
-    down: { x: 0, y: 1 },
-    left: { x: -1, y: 0 },
-    right: { x: 1, y: 0 },
-  };
+  if (!R || !S || !A) {
+    console.error('[neon-serpent] 规则 / 存档 / 埋点模块未加载，请检查 script 顺序。');
+    return;
+  }
 
-  const STORE = { best: 'neon-serpent:best', muted: 'neon-serpent:muted' };
+  const CFG = R.CONFIG;
+  const DIRS = R.DIRS;
 
-  /* ------------------------------ 2. DOM ----------------------------------- */
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const params = new URLSearchParams(location.search);
+  const isDemo = params.get('demo') === '1';
+
+  /* ----------------------------- 2. DOM 与画布 ------------------------------ */
 
   const $ = (id) => document.getElementById(id);
   const canvas = $('board');
@@ -58,36 +60,7 @@
   const pauseBtn = $('pauseBtn');
   const dpad = $('dpad');
 
-  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const isDemo = new URLSearchParams(location.search).get('demo') === '1';
-
-  /* ------------------------------ 3. 状态 ---------------------------------- */
-
-  const game = {
-    mode: 'ready',        // ready | playing | paused | dying | over
-    snake: [],
-    prevSnake: [],
-    dir: DIRS.right,
-    nextDir: DIRS.right,
-    fruit: { x: 0, y: 0 },
-    bonus: null,          // { x, y, bornAt, dieAt }
-    score: 0,
-    best: readNumber(STORE.best),
-    combo: 1,
-    comboTimer: 0,
-    eaten: 0,
-    stepTimer: CFG.baseStep,
-    acc: 0,
-    dieAt: 0,
-    shake: 0,
-    particles: [],
-  };
-
   const view = { size: 0, cell: 0, dpr: 1 };
-
-  const audio = { ctx: null, muted: readBool(STORE.muted) };
-
-  /* ---------------------- 4. 画布自适应（含 DPR） --------------------------- */
 
   function fitCanvas() {
     const rect = stage.getBoundingClientRect();
@@ -103,180 +76,352 @@
     view.dpr = dpr;
   }
 
-  if ('ResizeObserver' in window) {
-    new ResizeObserver(fitCanvas).observe(stage);
-  } else {
-    window.addEventListener('resize', fitCanvas);
+  if ('ResizeObserver' in window) new ResizeObserver(fitCanvas).observe(stage);
+  else window.addEventListener('resize', fitCanvas);
+
+  /* ----------------------------- 3. 运行状态 -------------------------------- */
+
+  function safeStorage() {
+    try {
+      const probe = '__neon__';
+      window.localStorage.setItem(probe, probe);
+      window.localStorage.removeItem(probe);
+      return window.localStorage;
+    } catch {
+      return null;
+    }
   }
 
-  /* --------------------------- 5. 游戏逻辑 --------------------------------- */
+  const storage = safeStorage();
+  const store = S.createStore(storage, { demo: isDemo });
+  const analytics = A.createAnalytics({ storage, demo: isDemo, clock: () => Date.now() });
 
-  function resetGame() {
-    const cx = Math.floor(CFG.cols / 2);
-    const cy = Math.floor(CFG.rows / 2);
+  let best = store.readBest();
 
-    game.snake = [
-      { x: cx, y: cy },
-      { x: cx - 1, y: cy },
-      { x: cx - 2, y: cy },
-    ];
-    game.prevSnake = game.snake.map((s) => ({ ...s }));
-    game.dir = DIRS.right;
-    game.nextDir = DIRS.right;
-    game.score = 0;
-    game.combo = 1;
-    game.comboTimer = 0;
-    game.eaten = 0;
-    game.stepTimer = CFG.baseStep;
+  let game = R.createState({ rng: Math.random });
+  game.mode = 'ready';          // ready | playing | paused | dying | over
+  game.acc = 0;                 // 步长累加器
+  game.particles = [];
+  game.shake = 0;
+  game.dieAt = 0;
+
+  const run = { startedAt: 0, activeMs: 0, comboMax: 1, overAt: 0 };
+
+  const audio = { ctx: null, muted: store.readMuted(), unlocked: false };
+
+  function durationSec() {
+    return Math.round(run.activeMs / 100) / 10;
+  }
+
+  function referrerSource() {
+    try {
+      if (!document.referrer) return 'direct';
+      return new URL(document.referrer).host === location.host ? 'direct' : 'share';
+    } catch {
+      return 'direct';
+    }
+  }
+
+  /* --------------------------- 4. 一局的生命周期 ---------------------------- */
+
+  function startGame() {
+    if (game.mode === 'dying') return; // 死亡动画期间忽略重开（边界表）
+
+    if (game.mode === 'over' && run.overAt) {
+      analytics.track('retry', {
+        previousScore: game.score,
+        gapMs: Math.max(0, Math.round(performance.now() - run.overAt)),
+      });
+    }
+
+    game = R.createState({ rng: Math.random });
+    game.mode = 'playing';
     game.acc = 0;
-    game.bonus = null;
-    game.particles.length = 0;
+    game.particles = [];
     game.shake = 0;
-    game.fruit = randomEmptyCell();
+    game.dieAt = 0;
+
+    run.activeMs = 0;
+    run.startedAt = performance.now();
+    run.comboMax = 1;
+    run.overAt = 0;
+
+    hideOverlay();
     syncHud();
+    syncPauseButton();
+    ensureAudio();
+    playStart();
+
+    analytics.track('run_start', { source: referrerSource(), demo: isDemo });
   }
 
-  function occupied(x, y) {
-    if (game.fruit.x === x && game.fruit.y === y) return true;
-    if (game.bonus && game.bonus.x === x && game.bonus.y === y) return true;
-    return game.snake.some((s) => s.x === x && s.y === y);
-  }
-
-  function randomEmptyCell() {
-    const free = [];
-    for (let y = 0; y < CFG.rows; y++) {
-      for (let x = 0; x < CFG.cols; x++) {
-        if (!occupied(x, y)) free.push({ x, y });
-      }
+  function togglePause() {
+    if (game.mode === 'playing') {
+      game.mode = 'paused';
+      game.acc = 0;               // 恢复时不跳步（FR-6.1）
+      suspendAudio();             // 暂停期间不留音效（FR-6.3）
+      showOverlay({ title: '已暂停', html: '喝口水，回来继续。', button: '继续游戏' });
+    } else if (game.mode === 'paused') {
+      game.mode = 'playing';
+      game.acc = 0;
+      resumeAudio();
+      hideOverlay();
     }
-    return free.length ? free[Math.floor(Math.random() * free.length)] : { x: 0, y: 0 };
+    syncPauseButton();
   }
 
-  function hitsBody(x, y, growing) {
-    const limit = growing ? game.snake.length : game.snake.length - 1;
-    for (let i = 0; i < limit; i++) {
-      if (game.snake[i].x === x && game.snake[i].y === y) return true;
-    }
-    return false;
-  }
-
-  function step() {
-    game.prevSnake = game.snake.map((s) => ({ ...s }));
-    game.dir = game.nextDir;
-
+  function onEat(result) {
     const head = game.snake[0];
-    const nx = head.x + game.dir.x;
-    const ny = head.y + game.dir.y;
+    const gold = result.ate === 'bonus';
 
-    if (nx < 0 || ny < 0 || nx >= CFG.cols || ny >= CFG.rows) return die();
-
-    const eatsFruit = game.fruit.x === nx && game.fruit.y === ny;
-    const eatsBonus = !!game.bonus && game.bonus.x === nx && game.bonus.y === ny;
-    const growing = eatsFruit || eatsBonus;
-
-    if (hitsBody(nx, ny, growing)) return die();
-
-    game.snake.unshift({ x: nx, y: ny });
-
-    if (!growing) {
-      game.snake.pop();
-      return;
-    }
-
-    if (eatsBonus) {
-      game.bonus = null;
-      award(30, nx, ny, '#fbbf24', 18);
-      playBonus();
-    } else {
-      award(10, nx, ny, '#f472b6', 12);
-      playEat();
-      game.eaten += 1;
-      game.stepTimer = Math.max(CFG.minStep, CFG.baseStep * Math.pow(CFG.speedUp, game.eaten));
-      game.fruit = randomEmptyCell();
-
-      if (game.eaten % CFG.bonusEvery === 0 && !game.bonus) {
-        const cell = randomEmptyCell();
-        game.bonus = { x: cell.x, y: cell.y, bornAt: performance.now(), dieAt: performance.now() + CFG.bonusLife };
-      }
-    }
-  }
-
-  function award(base, x, y, color, count) {
-    game.combo = game.comboTimer > 0 ? Math.min(CFG.comboMax, game.combo + 1) : 1;
-    game.comboTimer = CFG.comboWindow;
-
-    game.score += base * game.combo;
-    if (game.score > game.best) {
-      game.best = game.score;
-      writeNumber(STORE.best, game.best);
-    }
-
-    burst(x, y, color, reduceMotion ? Math.ceil(count / 3) : count);
+    burst(head.x, head.y, gold ? '#fbbf24' : '#f472b6', reduceMotion ? 6 : gold ? 18 : 12);
     game.shake = Math.max(game.shake, reduceMotion ? 0 : 3.2);
+    if (gold) playBonus();
+    else playEat();
+
+    run.comboMax = Math.max(run.comboMax, game.combo);
+
+    analytics.track('fruit_eaten', {
+      type: gold ? 'gold' : 'normal',
+      combo: game.combo,
+      score: game.score,
+      stepMs: game.stepMs,
+    });
+
+    // 最高分只在这里和结算时更新，且 demo 一律不落盘（FR-7.4）
+    if (!isDemo && game.score > best) {
+      best = game.score;
+      store.writeBest(best);
+    }
+
     syncHud();
   }
 
-  function die() {
+  function onDie(cause, now) {
     if (game.mode !== 'playing') return;
+
     game.mode = 'dying';
-    game.dieAt = performance.now() + (reduceMotion ? 220 : 620);
+    game.dieAt = now + (reduceMotion ? 220 : 620);
     game.shake = reduceMotion ? 0 : 12;
     playDie();
 
     const head = game.snake[0];
     burst(head.x, head.y, '#f472b6', reduceMotion ? 8 : 26);
     if (!reduceMotion) {
-      game.snake.forEach((s, i) => {
-        if (i % 2 === 0) burst(s.x, s.y, '#6366f1', 2);
+      game.snake.forEach((cell, i) => {
+        if (i % 2 === 0) burst(cell.x, cell.y, '#6366f1', 2);
       });
     }
+
+    analytics.track('death', {
+      cause,
+      score: game.score,
+      durationSec: durationSec(),
+      comboMax: run.comboMax,
+    });
+
+    syncPauseButton();
   }
 
-  function gameOver() {
+  function gameOver(now) {
     game.mode = 'over';
-    if (game.score > game.best) {
-      game.best = game.score;
-      writeNumber(STORE.best, game.best);
+    run.overAt = now;
+
+    const isNewBest = !isDemo && game.score > best && game.score > 0;
+    if (isNewBest) {
+      best = game.score;
+      store.writeBest(best);
     }
+
     syncHud();
     syncPauseButton();
+
+    analytics.track('run_end', {
+      score: game.score,
+      best,
+      isNewBest,
+      durationSec: durationSec(),
+    });
+
     showOverlay({
       title: '游戏结束',
-      html: `本局得分 <b>${game.score}</b> · 最高 <b>${game.best}</b><br>再来一局，把连击续上。`,
+      html: `本局得分 <b>${game.score}</b> · 最高 <b>${best}</b><br>再来一局，把连击续上。`,
       button: '再来一局',
     });
   }
 
-  function startGame() {
-    resetGame();
-    game.mode = 'playing';
-    hideOverlay();
-    syncPauseButton();
-    ensureAudio();
-    playStart();
-  }
-
-  function togglePause() {
-    if (game.mode === 'playing') {
-      game.mode = 'paused';
-      showOverlay({ title: '已暂停', html: '喝口水，回来继续。', button: '继续游戏' });
-    } else if (game.mode === 'paused') {
-      game.mode = 'playing';
-      hideOverlay();
-    }
-    syncPauseButton();
-  }
-
   function syncPauseButton() {
-    pauseBtn.textContent = game.mode === 'paused' ? '▶' : '⏸';
-    pauseBtn.setAttribute('aria-label', game.mode === 'paused' ? '继续游戏' : '暂停');
+    const paused = game.mode === 'paused';
+    pauseBtn.textContent = paused ? '▶' : '⏸';
+    pauseBtn.setAttribute('aria-label', paused ? '继续游戏' : '暂停');
   }
 
-  /* ----------------------------- 6. 粒子 ----------------------------------- */
+  /* ------------------------------- 5. 音效 --------------------------------- */
+
+  function ensureAudio() {
+    if (!audio.unlocked) return null; // NFR-7：首次手势后才创建
+    if (!audio.ctx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      try {
+        audio.ctx = new AC();
+      } catch {
+        return null;
+      }
+    }
+    if (audio.ctx.state === 'suspended') audio.ctx.resume().catch(() => {});
+    return audio.ctx;
+  }
+
+  function suspendAudio() {
+    try {
+      if (audio.ctx && audio.ctx.state === 'running') audio.ctx.suspend().catch(() => {});
+    } catch { /* 忽略 */ }
+  }
+
+  function resumeAudio() {
+    try {
+      if (audio.ctx && audio.ctx.state === 'suspended') audio.ctx.resume().catch(() => {});
+    } catch { /* 忽略 */ }
+  }
+
+  function blip({ freq = 440, to = 0, dur = 0.12, type = 'sine', gain = 0.05 }) {
+    if (audio.muted) return;
+    const ac = ensureAudio();
+    if (!ac) return;
+
+    const osc = ac.createOscillator();
+    const amp = ac.createGain();
+    const t0 = ac.currentTime;
+
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, t0);
+    if (to) osc.frequency.exponentialRampToValueAtTime(Math.max(30, to), t0 + dur);
+
+    amp.gain.setValueAtTime(0.0001, t0);
+    amp.gain.exponentialRampToValueAtTime(gain, t0 + 0.012);
+    amp.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+
+    osc.connect(amp).connect(ac.destination);
+    osc.start(t0);
+    osc.stop(t0 + dur + 0.03);
+  }
+
+  function playStart() { blip({ freq: 380, to: 620, dur: 0.16, type: 'triangle', gain: 0.045 }); }
+  function playEat() { blip({ freq: 520, to: 760, dur: 0.10, type: 'square', gain: 0.035 }); }
+  function playBonus() {
+    blip({ freq: 660, dur: 0.09, type: 'triangle', gain: 0.045 });
+    setTimeout(() => blip({ freq: 880, dur: 0.09, type: 'triangle', gain: 0.045 }), 80);
+    setTimeout(() => blip({ freq: 1180, dur: 0.12, type: 'triangle', gain: 0.045 }), 160);
+  }
+  function playDie() { blip({ freq: 240, to: 55, dur: 0.42, type: 'sawtooth', gain: 0.05 }); }
+
+  function toggleSound() {
+    audio.muted = !audio.muted;
+    store.writeMuted(audio.muted);
+    analytics.track('mute_toggle', { muted: audio.muted });
+    syncSoundButton();
+    if (!audio.muted) {
+      ensureAudio();
+      playEat();
+    }
+  }
+
+  function syncSoundButton() {
+    soundBtn.textContent = audio.muted ? '🔇' : '🔊';
+    soundBtn.setAttribute('aria-pressed', String(!audio.muted));
+  }
+
+  /* ------------------------------- 6. 输入 --------------------------------- */
+
+  function turn(name) {
+    if (game.mode === 'ready' || game.mode === 'over') startGame();
+    if (game.mode !== 'playing') return false;
+    return R.queueDirection(game, name);
+  }
+
+  const KEYMAP = {
+    ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
+    w: 'up', s: 'down', a: 'left', d: 'right',
+    W: 'up', S: 'down', A: 'left', D: 'right',
+  };
+
+  window.addEventListener('keydown', (e) => {
+    audio.unlocked = true;
+
+    if (e.key in KEYMAP) {
+      e.preventDefault();
+      turn(KEYMAP[e.key]);
+      return;
+    }
+    if (e.code === 'Space' || e.key === 'Enter') {
+      e.preventDefault();
+      if (game.mode === 'ready' || game.mode === 'over') startGame();
+      else if (game.mode === 'playing' || game.mode === 'paused') togglePause();
+      return;
+    }
+    if (e.key === 'm' || e.key === 'M') toggleSound();
+    if (e.key === 'r' || e.key === 'R') startGame();
+  }, { passive: false });
+
+  // 滑动（阈值 24px，FR-5.3）
+  let swipeStart = null;
+
+  stage.addEventListener('pointerdown', (e) => {
+    audio.unlocked = true;
+    if (e.target.closest('button')) return;
+    swipeStart = { x: e.clientX, y: e.clientY };
+  });
+
+  stage.addEventListener('pointerup', (e) => {
+    if (!swipeStart) return;
+    const dx = e.clientX - swipeStart.x;
+    const dy = e.clientY - swipeStart.y;
+    swipeStart = null;
+
+    const absX = Math.abs(dx);
+    const absY = Math.abs(dy);
+    const dist = Math.max(absX, absY);
+    if (dist < 8) return; // 抖动噪声，不计入误触统计
+
+    const accepted = dist >= CFG.swipeThreshold
+      && turn(absX > absY ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up'));
+
+    analytics.track('swipe', { ignored: !accepted, dist: Math.round(dist) });
+  });
+
+  stage.addEventListener('pointercancel', () => { swipeStart = null; });
+
+  dpad.addEventListener('pointerdown', (e) => {
+    const btn = e.target.closest('[data-dir]');
+    if (!btn) return;
+    audio.unlocked = true;
+    e.preventDefault();
+    turn(btn.dataset.dir);
+  });
+
+  ovBtn.addEventListener('click', () => {
+    if (game.mode === 'paused') togglePause();
+    else startGame();
+  });
+
+  pauseBtn.addEventListener('click', () => {
+    if (game.mode === 'playing' || game.mode === 'paused') togglePause();
+  });
+
+  soundBtn.addEventListener('click', toggleSound);
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && game.mode === 'playing') togglePause();
+  });
+
+  /* --------------------------- 7. 粒子与绘制 -------------------------------- */
 
   function burst(cx, cy, color, count) {
     const cell = view.cell || 20;
-    for (let i = 0; i < count; i++) {
+    const cap = CFG.particleCap || 320;
+
+    for (let i = 0; i < count; i += 1) {
       const angle = Math.random() * Math.PI * 2;
       const speed = (0.6 + Math.random() * 2.4) * cell * 0.06;
       game.particles.push({
@@ -290,12 +435,12 @@
         color,
       });
     }
-    if (game.particles.length > 320) game.particles.splice(0, game.particles.length - 320);
+    if (game.particles.length > cap) game.particles.splice(0, game.particles.length - cap);
   }
 
   function updateParticles(dt) {
     const s = dt / 1000;
-    for (let i = game.particles.length - 1; i >= 0; i--) {
+    for (let i = game.particles.length - 1; i >= 0; i -= 1) {
       const p = game.particles[i];
       p.x += p.vx * 60 * s;
       p.y += p.vy * 60 * s;
@@ -305,8 +450,6 @@
       if (p.life <= 0) game.particles.splice(i, 1);
     }
   }
-
-  /* ----------------------------- 7. 绘制 ----------------------------------- */
 
   function drawBackground() {
     const { size } = view;
@@ -322,7 +465,7 @@
     ctx.strokeStyle = 'rgba(148, 163, 184, 0.075)';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    for (let i = 1; i < CFG.cols; i++) {
+    for (let i = 1; i < CFG.cols; i += 1) {
       const p = Math.round(i * cell) + 0.5;
       ctx.moveTo(p, 0);
       ctx.lineTo(p, size);
@@ -350,6 +493,8 @@
   }
 
   function drawFruit(now) {
+    if (!game.fruit) return;
+
     const cell = view.cell;
     const cx = (game.fruit.x + 0.5) * cell;
     const cy = (game.fruit.y + 0.5) * cell;
@@ -398,7 +543,7 @@
     ctx.translate(cx, cy);
     ctx.rotate(spin);
     ctx.beginPath();
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 5; i += 1) {
       const a = (i * Math.PI * 2) / 5 - Math.PI / 2;
       const a2 = a + Math.PI / 5;
       ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
@@ -409,7 +554,7 @@
     ctx.fill();
     ctx.restore();
 
-    // 剩余时间环
+    // 剩余时间环（FR-3.4）
     ctx.strokeStyle = `rgba(251, 191, 36, ${0.35 + left * 0.5})`;
     ctx.lineWidth = Math.max(1.5, cell * 0.07);
     ctx.beginPath();
@@ -423,8 +568,7 @@
     const inset = Math.max(1.2, cell * 0.075);
     const radius = Math.max(3, cell * 0.32);
 
-    // 先铺一层柔和光晕，避免逐段 shadowBlur 的开销
-    for (let i = len - 1; i >= 0; i--) {
+    for (let i = len - 1; i >= 0; i -= 1) {
       const seg = game.snake[i];
       const t = len === 1 ? 0 : i / (len - 1);
       ctx.fillStyle = `hsla(${188 + t * 62} 92% 62% / 0.16)`;
@@ -433,7 +577,7 @@
       ctx.fill();
     }
 
-    for (let i = len - 1; i >= 0; i--) {
+    for (let i = len - 1; i >= 0; i -= 1) {
       const seg = game.snake[i];
       const t = len === 1 ? 0 : i / (len - 1);
       const hue = 188 + t * 62;
@@ -459,13 +603,11 @@
       if (i === 0) ctx.restore();
     }
 
-    // 头部高光与眼睛
+    // 头部高光与眼睛（跟随插值位置）
     const head = game.snake[0];
-    const hx = ((game.prevSnake[0] && progress > 0) ? head.x : head.x) * cell;
-    const hy = head.y * cell;
+    let hpx = (head.x + 0.5) * cell;
+    let hpy = (head.y + 0.5) * cell;
 
-    let hpx = hx + cell / 2;
-    let hpy = hy + cell / 2;
     if (game.prevSnake[0] && progress > 0 && progress <= 1) {
       const from = game.prevSnake[0];
       if (Math.abs(from.x - head.x) + Math.abs(from.y - head.y) === 1) {
@@ -499,9 +641,9 @@
   }
 
   function render(now) {
-    const progress = game.mode === 'playing'
-      ? Math.min(1, Math.max(0, game.acc / game.stepTimer))
-      : game.mode === 'dying' ? 1 : Math.min(1, game.acc / game.stepTimer);
+    const progress = game.mode === 'paused'
+      ? 0
+      : R.progress(game.acc, game.stepMs);
 
     ctx.save();
     if (game.shake > 0.1) {
@@ -512,141 +654,13 @@
     drawBackground();
     drawFruit(now);
     drawBonus(now);
-    drawSnake(game.mode === 'paused' ? 0 : progress);
+    drawSnake(progress);
     drawParticles();
 
     ctx.restore();
   }
 
-  /* ----------------------------- 8. 音效 ----------------------------------- */
-
-  function ensureAudio() {
-    if (!audio.ctx) {
-      const AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC) return;
-      audio.ctx = new AC();
-    }
-    if (audio.ctx.state === 'suspended') audio.ctx.resume();
-  }
-
-  function blip({ freq = 440, to = 0, dur = 0.12, type = 'sine', gain = 0.05 }) {
-    if (audio.muted) return;
-    ensureAudio();
-    const ac = audio.ctx;
-    if (!ac) return;
-
-    const osc = ac.createOscillator();
-    const amp = ac.createGain();
-    const t0 = ac.currentTime;
-
-    osc.type = type;
-    osc.frequency.setValueAtTime(freq, t0);
-    if (to) osc.frequency.exponentialRampToValueAtTime(Math.max(30, to), t0 + dur);
-
-    amp.gain.setValueAtTime(0.0001, t0);
-    amp.gain.exponentialRampToValueAtTime(gain, t0 + 0.012);
-    amp.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-
-    osc.connect(amp).connect(ac.destination);
-    osc.start(t0);
-    osc.stop(t0 + dur + 0.03);
-  }
-
-  const playStart = () => { blip({ freq: 380, to: 620, dur: 0.16, type: 'triangle', gain: 0.045 }); };
-  const playEat = () => { blip({ freq: 520, to: 760, dur: 0.10, type: 'square', gain: 0.035 }); };
-  const playBonus = () => {
-    blip({ freq: 660, dur: 0.09, type: 'triangle', gain: 0.045 });
-    setTimeout(() => blip({ freq: 880, dur: 0.09, type: 'triangle', gain: 0.045 }), 80);
-    setTimeout(() => blip({ freq: 1180, dur: 0.12, type: 'triangle', gain: 0.045 }), 160);
-  };
-  const playDie = () => { blip({ freq: 240, to: 55, dur: 0.42, type: 'sawtooth', gain: 0.05 }); };
-
-  function toggleSound() {
-    audio.muted = !audio.muted;
-    writeBool(STORE.muted, audio.muted);
-    syncSoundButton();
-    if (!audio.muted) { ensureAudio(); playEat(); }
-  }
-
-  function syncSoundButton() {
-    soundBtn.textContent = audio.muted ? '🔇' : '🔊';
-    soundBtn.setAttribute('aria-pressed', String(!audio.muted));
-  }
-
-  /* ----------------------------- 9. 输入 ----------------------------------- */
-
-  function setDirection(name) {
-    if (game.mode === 'ready') { startGame(); }
-    if (game.mode !== 'playing') return;
-
-    const d = DIRS[name];
-    if (!d) return;
-    const cur = game.dir;
-    if (d.x === -cur.x && d.y === -cur.y) return; // 禁止 180° 掉头
-    if (d.x === cur.x && d.y === cur.y) return;
-    game.nextDir = d;
-  }
-
-  const KEYMAP = {
-    ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
-    w: 'up', s: 'down', a: 'left', d: 'right',
-    W: 'up', S: 'down', A: 'left', D: 'right',
-  };
-
-  window.addEventListener('keydown', (e) => {
-    if (e.key in KEYMAP) {
-      e.preventDefault();
-      setDirection(KEYMAP[e.key]);
-      return;
-    }
-    if (e.code === 'Space' || e.key === 'Enter') {
-      e.preventDefault();
-      if (game.mode === 'ready' || game.mode === 'over') startGame();
-      else togglePause();
-      return;
-    }
-    if (e.key === 'm' || e.key === 'M') toggleSound();
-    if (e.key === 'r' || e.key === 'R') startGame();
-  }, { passive: false });
-
-  // 滑动
-  let swipeStart = null;
-  stage.addEventListener('pointerdown', (e) => {
-    if (e.target.closest('button')) return;
-    swipeStart = { x: e.clientX, y: e.clientY };
-  });
-  stage.addEventListener('pointerup', (e) => {
-    if (!swipeStart) return;
-    const dx = e.clientX - swipeStart.x;
-    const dy = e.clientY - swipeStart.y;
-    swipeStart = null;
-    if (Math.abs(dx) < 24 && Math.abs(dy) < 24) return;
-    setDirection(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up'));
-  });
-  stage.addEventListener('pointercancel', () => { swipeStart = null; });
-
-  // 手机方向键
-  dpad.addEventListener('pointerdown', (e) => {
-    const btn = e.target.closest('[data-dir]');
-    if (!btn) return;
-    e.preventDefault();
-    setDirection(btn.dataset.dir);
-  });
-
-  ovBtn.addEventListener('click', () => {
-    if (game.mode === 'paused') togglePause();
-    else startGame();
-  });
-  pauseBtn.addEventListener('click', () => {
-    if (game.mode === 'playing' || game.mode === 'paused') togglePause();
-  });
-  soundBtn.addEventListener('click', toggleSound);
-
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden && game.mode === 'playing') togglePause();
-  });
-
-  /* --------------------------- 10. 界面状态 -------------------------------- */
+  /* ------------------------- 8. HUD / 覆盖层 / 埋点 ------------------------- */
 
   function showOverlay({ title, html, button }) {
     ovTitle.textContent = title;
@@ -661,83 +675,116 @@
 
   function syncHud() {
     scoreEl.textContent = String(game.score);
-    bestEl.textContent = String(game.best);
+    bestEl.textContent = String(best);
     comboEl.textContent = `×${game.combo}`;
     comboWrap.hidden = game.combo <= 1;
   }
 
-  /* ---------------------------- 11. 存档 ----------------------------------- */
+  const frameLog = [];
+  let frameSeq = 0;
 
-  function readNumber(key) {
-    try {
-      const v = Number(localStorage.getItem(key));
-      return Number.isFinite(v) && v > 0 ? v : 0;
-    } catch { return 0; }
-  }
-  function writeNumber(key, value) {
-    try { localStorage.setItem(key, String(value)); } catch { /* 隐私模式下忽略 */ }
-  }
-  function readBool(key) {
-    try { return localStorage.getItem(key) === '1'; } catch { return false; }
-  }
-  function writeBool(key, value) {
-    try { localStorage.setItem(key, value ? '1' : '0'); } catch { /* 忽略 */ }
+  function trackFrame(dt) {
+    frameSeq += 1;
+    frameLog.push(dt);
+    if (frameLog.length > 180) frameLog.shift();
+    if (frameSeq % 60 !== 0 || frameLog.length < 30) return;
+
+    const sorted = [...frameLog].sort((a, b) => a - b);
+    const p95 = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))];
+    const dropped = frameLog.filter((d) => d > 16.7).length / frameLog.length;
+    analytics.track('frame_stats', {
+      p95FrameMs: Math.round(p95 * 10) / 10,
+      droppedRatio: Math.round(dropped * 1000) / 1000,
+    });
   }
 
-  /* ----------------------------- 12. 演示 ---------------------------------- */
+  function downloadJson(filename, text) {
+    const blob = new Blob([text], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
 
-  // 演示模式（?demo=1）：给截图 / 录屏用的自动寻路，不参与真实计分展示
+  // 本地聚合 → 手动导出（PRD 11.2）；分析前默认过滤 demo 事件（FR-8.2）
+  window.NeonStats = {
+    events: (opts) => analytics.readAll(opts || { includeDemo: false }),
+    export: (includeDemo = false) => {
+      const data = analytics.readAll({ includeDemo });
+      downloadJson(`neon-serpent-events-${Date.now()}.json`, JSON.stringify(data, null, 2));
+      return data.length;
+    },
+    clear: () => analytics.clear(),
+  };
+
+  // 调试 / 端到端测试用的只读句柄
+  window.NeonSerpent = {
+    rules: R,
+    state: () => game,
+    best: () => best,
+    mode: () => game.mode,
+  };
+
+  /* ---------------------------- 9. 演示模式 --------------------------------- */
+
   function botDirection() {
     const head = game.snake[0];
-    const target = game.fruit;
-    const options = Object.entries(DIRS).filter(([, d]) => !(d.x === -game.dir.x && d.y === -game.dir.y));
+    const target = game.bonus || game.fruit;
+    if (!target) return;
 
-    const safe = options.filter(([, d]) => {
-      const nx = head.x + d.x;
-      const ny = head.y + d.y;
-      if (nx < 0 || ny < 0 || nx >= CFG.cols || ny >= CFG.rows) return false;
-      return !hitsBody(nx, ny, false);
-    });
-    if (!safe.length) return;
+    const blocked = new Set();
+    for (let i = 0; i < game.snake.length - 1; i += 1) {
+      blocked.add(game.snake[i].y * game.cols + game.snake[i].x);
+    }
 
-    safe.sort((a, b) => {
-      const da = Math.abs(head.x + a[1].x - target.x) + Math.abs(head.y + a[1].y - target.y);
-      const db = Math.abs(head.x + b[1].x - target.x) + Math.abs(head.y + b[1].y - target.y);
-      return da - db;
-    });
-    game.nextDir = safe[0][1];
+    const options = Object.keys(DIRS)
+      .map((name) => [name, DIRS[name]])
+      .filter(([, d]) => {
+        if (d.x === -game.dir.x && d.y === -game.dir.y) return false;
+        const nx = head.x + d.x;
+        const ny = head.y + d.y;
+        if (nx < 0 || ny < 0 || nx >= game.cols || ny >= game.rows) return false;
+        return !blocked.has(ny * game.cols + nx);
+      });
+
+    if (!options.length) return;
+
+    const dist = (d) => Math.abs(head.x + d.x - target.x) + Math.abs(head.y + d.y - target.y);
+    options.sort((a, b) => dist(a[1]) - dist(b[1]));
+    R.queueDirection(game, options[0][0]);
   }
 
-  /* ----------------------------- 13. 主循环 -------------------------------- */
+  /* ------------------------------ 10. 主循环 -------------------------------- */
 
   let lastTime = performance.now();
 
   function update(dt, now) {
+    trackFrame(dt);
+
     if (game.mode === 'playing') {
       game.acc += dt;
+      run.activeMs += dt;
+
       let guard = 0;
-      while (game.acc >= game.stepTimer && game.mode === 'playing' && guard < 4) {
-        game.acc -= game.stepTimer;
+      while (game.acc >= game.stepMs && game.mode === 'playing' && guard < 4) {
+        game.acc -= game.stepMs;
         if (isDemo) botDirection();
-        step();
+
+        const result = R.tick(game, { now, rng: Math.random });
+        if (result.ate) onEat(result);
+        if (result.died) onDie(result.died, now);
         guard += 1;
       }
+
+      if (R.refreshCombo(game, now)) syncHud();
+      R.expireBonus(game, now);
     } else if (game.mode === 'ready' || game.mode === 'over') {
       game.acc = 0;
     }
 
-    if (game.comboTimer > 0) {
-      game.comboTimer -= dt;
-      if (game.comboTimer <= 0) {
-        game.comboTimer = 0;
-        game.combo = 1;
-        syncHud();
-      }
-    }
-
-    if (game.bonus && now > game.bonus.dieAt) game.bonus = null;
-
-    if (game.mode === 'dying' && now >= game.dieAt) gameOver();
+    if (game.mode === 'dying' && now >= game.dieAt) gameOver(now);
 
     if (game.shake > 0.05) game.shake *= Math.pow(0.9, dt / 16);
     else game.shake = 0;
@@ -746,19 +793,22 @@
   }
 
   function loop(now) {
-    const dt = Math.min(now - lastTime, 120);
+    const raw = now - lastTime;
+    const dt = Math.min(raw, 120);
     lastTime = now;
     update(dt, now);
     render(now);
     requestAnimationFrame(loop);
   }
 
-  /* ------------------------------ 14. 启动 --------------------------------- */
+  /* ------------------------------- 11. 启动 -------------------------------- */
 
   fitCanvas();
-  resetGame();
   syncSoundButton();
   syncPauseButton();
+  syncHud();
+
+  analytics.track('page_view', { ref: document.referrer || '', demo: isDemo });
 
   if (isDemo) startGame();
 

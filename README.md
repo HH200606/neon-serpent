@@ -24,7 +24,7 @@
 
 ## 特性
 
-- **固定步长 + 渲染插值**：逻辑按 76–150 ms 的固定节拍推进，画面用 `acc / stepTimer` 在格与格之间插值，所以再快的速度也不会「格子跳」；
+- **固定步长 + 渲染插值**：逻辑按 76–150 ms 的固定节拍推进，画面用 `acc / stepMs` 在格与格之间插值，所以再快的速度也不会「格子跳」；
 - **零资源**：蛇身、屋顶式的渐变、果实、粒子全部是 Canvas 路径；音效是振荡器 + 包络；
 - **手感细节**：吃果实时的粒子迸发、轻微屏幕抖动、掉血式减速、暂停自动触发（切标签页时）；
 - **手机可用**：滑动转向 + 方向键，`touch-action: none` 防止页面跟着滚；
@@ -48,7 +48,7 @@ python -m http.server 8000
 站点本身仍然零构建，下面这些只是开发期脚本（Node 22+，不需要装任何依赖；`e2e` 用到 Node 内置的 `WebSocket`）：
 
 ```bash
-node --test "tests/*.test.mjs"   # 单测：规则 / 存档 / 埋点（AC-1，36 例）
+node --test "tests/*.test.mjs"   # 单测：规则 / 存档 / 埋点（AC-1，40 例）
 node tools/check-size.mjs        # 首屏体积 ≤60KB（AC-2）
 node tools/check-links.mjs       # 无站外引用（AC-4）
 node tools/e2e.mjs               # 无头 Edge 跑端到端（AC-3/5/6，NFR-5）
@@ -93,7 +93,7 @@ PRD 维护两份，**同源生成**：Markdown 是唯一事实源，Word 由它�
 | [PRD v1.2 · Markdown](docs/PRD.md) | agent | YAML 元信息 + 稳定 ID（FR/M/ADR/R/T/AC）+ 状态枚举，可被引用、比对、校验 |
 | [PRD v1.2 · Word](docs/PRD-v1.2.docx) | 人 | 封面图、目录、A4 排版（由 `tools/md2docx.py` 从 Markdown 生成） |
 
-v1.2 相对 v1.1 的变化：把「一期补强」的 P0 做完——规则层抽出并配 36 例单测、demo 存档隔离修复、埋点本地聚合、OG 图改绝对地址、暂停挂音、可访问性边界声明，并补上 `tools/` 里的验收脚本。
+v1.2 相对 v1.1 的变化：把「一期补强」的 P0 做完——规则层抽出并配 40 例单测、demo 存档隔离修复、埋点本地聚合、OG 图改绝对地址、暂停挂音与暂停冻结连击计时、可访问性边界声明，并补上 `tools/` 里的验收脚本。
 
 ## 一点实现说明
 

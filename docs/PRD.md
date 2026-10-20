@@ -3,7 +3,7 @@ doc_id: prd-neon-serpent
 version: 1.2.0
 status: approved-for-build
 supersedes: 1.1.0
-date: 2026-10-20
+date: 2026-10-22
 owners: [HH200606]
 product: Neon Serpent / 霓虹贪吃蛇
 repo: https://github.com/HH200606/neon-serpent
@@ -21,7 +21,7 @@ status_enum: [implemented, partial, not-implemented, defect, waived]
 priority_enum: [P0, P1, P2, P3]
 ---
 
-# 霓虹贪吃蛇 · 产品需求文档（PRD）v1.1
+# 霓虹贪吃蛇 · 产品需求文档（PRD）v1.2
 
 ## 0. 一页纸摘要
 
@@ -31,7 +31,7 @@ priority_enum: [P0, P1, P2, P3]
 | :--- | :--- |
 | 是什么 | 零依赖、纯 Canvas 的霓虹风贪吃蛇：24×24 网格、连击倍率、金果实、合成音效、手机可玩 |
 | 给谁 | 碎片时间想玩一局的人；喜欢霓虹/复古视觉的人；会顺手看源码的前端同行 |
-| 解决什么 | 同类复刻普遍手感粗糙（跳格、无音效、手机不能玩、打开慢）——本作用固定步长+插值、合成音效、50KB 零外部请求来对冲 |
+| 解决什么 | 同类复刻普遍手感粗糙（跳格、无音效、手机不能玩、打开慢）——本作用固定步长+插值、合成音效、53KB 零外部请求来对冲 |
 | 成功标准 | 五局内「再来一局率」≥30%；分数中位数 100–250；中端机掉帧率 ≤5% |
 | 现在到哪一步 | 一期已上线；一期补强的 P0 已收口：规则层可测试 + 单测、埋点本地聚合、demo 存档隔离、OG 修复；成绩卡（FR-11.3）与 V2 仍未做 |
 | 不做 | 账号、排行榜、多人、内购、关卡编辑器 |
@@ -45,13 +45,13 @@ priority_enum: [P0, P1, P2, P3]
 | 项 | 内容 |
 | :--- | :--- |
 | 文档 ID | prd-neon-serpent |
-| 版本 | v1.1（替换 v1.0） |
+| 版本 | v1.2（替换 v1.1） |
 | 状态 | 已评审 · 可执行 |
 | 负责人 | HH200606（产品 / 设计 / 开发） |
 | 读者 | 人（Word 版）· agent（Markdown 版，本文件） |
 | 线上 | <https://hh200606.github.io/neon-serpent/> |
 | 仓库 | <https://github.com/HH200606/neon-serpent> |
-| 更新日期 | 2026-10-21 |
+| 更新日期 | 2026-10-22 |
 
 **这份文档怎么用**
 
@@ -67,7 +67,7 @@ priority_enum: [P0, P1, P2, P3]
 | v0.9 | 2026-10-19 | 连击、金果实、音效、手机操作、演示模式 | HH200606 |
 | v1.0 | 2026-10-20 | 上线并定稿 | HH200606 |
 | **v1.1** | 2026-10-21 | 按评审意见重写：补决策规则与止损线、竞品观测表、可测试性需求（FR-0）、demo 存档隔离（FR-7.4，缺陷）、OG 分享（FR-11.1）；修正样本量与可访问性表述 | HH200606 |
-| **v1.2** | 2026-10-20 | 一期补强 P0 落地：FR-0 规则层与 36 例单测、FR-7.4 缺陷修复、第 11 节埋点本地聚合（FR-8.2）、OG 图改绝对地址（FR-11.1）、FR-6.3 暂停挂音、FR-10.5 可访问性边界；AC-1 命令改为 glob（Node 24 不接受目录参数）；新增 `tools/` 验收脚本 | HH200606 |
+| **v1.2** | 2026-10-22 | 一期补强 P0 落地：FR-0 规则层与 40 例单测、FR-7.4 缺陷修复、第 11 节埋点本地聚合（FR-8.2）、OG 图改绝对地址（FR-11.1）、FR-6.3 暂停挂音、FR-6.1 暂停冻结连击与金果实计时、FR-10.5 可访问性边界；AC-1 命令改为 glob（Node 24 不接受目录参数）；新增 `tools/` 验收脚本 | HH200606 |
 
 ---
 
@@ -223,7 +223,7 @@ H0 是**假设，尚未验证**（见 1.3 的观测计划）。它成立与否�
 | ID | 需求 | 优先级 | 状态 | 验收标准 |
 | :--- | :--- | :--- | :--- | :--- |
 | FR-0.1 | 纯规则（移动、转向合法性、碰撞、计分、连击、速度曲线、果实生成）抽成无 DOM 依赖模块 | P0 | implemented | 可在 Node 下加载，不触碰 `window`/`document`（`js/rules.js`） |
-| FR-0.2 | 规则模块配单测，覆盖 T-1～T-7 | P0 | implemented | `node --test "tests/*.test.mjs"` 全绿，36 例 |
+| FR-0.2 | 规则模块配单测，覆盖 T-1～T-7 | P0 | implemented | `node --test "tests/*.test.mjs"` 全绿，40 例 |
 | FR-0.3 | 渲染/音效副作用不得进入规则层 | P1 | implemented | 规则层无 `ctx.` / `AudioContext` 引用 |
 
 ### 6.1 核心循环
@@ -278,7 +278,7 @@ H0 是**假设，尚未验证**（见 1.3 的观测计划）。它成立与否�
 
 | ID | 需求 | 优先级 | 状态 | 验收标准 |
 | :--- | :--- | :--- | :--- | :--- |
-| FR-6.1 | 暂停保留局面与计时 | P0 | implemented | 恢复不跳步 |
+| FR-6.1 | 暂停保留局面与计时 | P0 | implemented | 恢复不跳步；连击窗口与金果实寿命冻结（`shiftTimers`） |
 | FR-6.2 | 切后台自动暂停 | P1 | implemented | 返回时处于暂停 |
 | FR-6.3 | 暂停时挂起音频 | P2 | implemented | 暂停期间无音效残留（`AudioContext.suspend()`） |
 | FR-6.4 | 按钮图标与状态同步 | P2 | implemented | 图标切换正确 |
@@ -379,7 +379,7 @@ H0 是**假设，尚未验证**（见 1.3 的观测计划）。它成立与否�
 | :--- | :--- | :--- | :--- |
 | NFR-1 | 性能 | 掉帧率 ≤5% | 中端机：Android 4×A76 级（如 Pixel 6a / 骁龙 7 系）或 iPhone 12，最新 Chrome/Safari，冷启动后连玩 3 局采样 |
 | NFR-2 | 首屏 | 4G ≤600ms，本地 ≤150ms | Lighthouse mobile 或 `performance` 实测 |
-| NFR-3 | 包体 | 首屏 ≤60KB（当前 50KB） | html+css+js 字节和，禁用 gzip 计算（`tools/check-size.mjs`） |
+| NFR-3 | 包体 | 首屏 ≤60KB（当前 53KB） | html+css+js 字节和，禁用 gzip 计算（`tools/check-size.mjs`） |
 | NFR-4 | 输入延迟 | ≤1 帧 | 10 次按键取中位帧差 |
 | NFR-5 | 可靠性 | 控制台零 error | 冷启动 + 3 局 + 切后台各一次 |
 | NFR-6 | 音频 | 峰值 ≤-12 dBFS，短时响度 ≤-18 LUFS | 分析节点抽样 |
@@ -508,7 +508,7 @@ playing ─切后台→ paused
 
 | ID | 命令 / 检查 | 通过条件 |
 | :--- | :--- | :--- |
-| AC-1 | `node --test "tests/*.test.mjs"` | 全绿，用例 ≥12（当前 36） |
+| AC-1 | `node --test "tests/*.test.mjs"` | 全绿，用例 ≥12（当前 40） |
 | AC-2 | `node tools/check-size.mjs` | `html+css+js` ≤60KB |
 | AC-3 | `node tools/e2e.mjs`（场景 S4） | 结束前后 best 不变 |
 | AC-4 | `node tools/check-links.mjs` | 无第三方 http(s) 引用 |

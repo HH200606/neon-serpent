@@ -267,3 +267,16 @@ Run: `node tools/check-links.mjs` → 当前 `index.html` 的 `og:image` 是相�
 - [ ] `node tools/e2e.mjs` → 全部场景 PASS，截图正常
 - [ ] `git status --short` → 仅预期文件
 - [ ] 汇总：哪些 ID 从 not-implemented/defect 变为 implemented，哪些仍留待 V2
+
+---
+
+## 执行后记（2026-10-22 回填）
+
+实际执行与上面计划的差异，留档以免下次按计划找文件时扑空：
+
+- 没建 `tests/e2e-cases.mjs`：场景直接内联在 `tools/e2e.mjs`，每个场景一个独立 browser context，读起来更顺。
+- Task 5/6 的脚本没有单独提交，随 `63c8ba7 refactor(game)` 一起进了历史；`git log -- tools/` 只能看到那一个提交。
+- `window.NeonSerpent` 暴露 `{rules, state(), best(), mode(), audioState()}`，比计划里的 `{game, rules}` 更适合端到端断言。
+- `createStore` 没做计划里的 `prefix` 选项（键名固定，测试也用不到）。
+- e2e 多了 S7（`node tools/e2e.mjs --soak`）验证 FR-8.1：demo 无输入 31 秒仍存活且得分 > 0。
+- 代码评审后追加修复：`run_end.isNewBest` 改为与开局记录比较（原先恒为 false）、暂停冻结连击窗口与金果实寿命（`NeonRules.shiftTimers`）、暂停期间不唤醒音频且静音冷启动不建实例、埋点 `readAll()`/`exportJson()` 默认过滤 demo、`frame_stats` 从 1s 降到 10s 一次、`check-links` 补协议相对地址、`safeStorage` 改为只读探测。

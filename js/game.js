@@ -447,6 +447,7 @@
 
   window.addEventListener('keydown', (e) => {
     audio.unlocked = true;
+    if (!audio.muted) ensureAudio(); // 浏览器自己挂起上下文时，任意按键都应把它唤醒（暂停中会被 ensureAudio 挡住）
 
     if (e.key in KEYMAP) {
       e.preventDefault();
@@ -468,6 +469,7 @@
 
   stage.addEventListener('pointerdown', (e) => {
     audio.unlocked = true;
+    if (!audio.muted) ensureAudio();
     if (e.target.closest('button')) return;
     swipeStart = { x: e.clientX, y: e.clientY };
   });
@@ -495,6 +497,7 @@
     const btn = e.target.closest('[data-dir]');
     if (!btn) return;
     audio.unlocked = true;
+    if (!audio.muted) ensureAudio();
     e.preventDefault();
     turn(btn.dataset.dir);
   });

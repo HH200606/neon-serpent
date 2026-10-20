@@ -468,6 +468,20 @@ async function scenarioOgShot(browser, base) {
   await page.close();
 }
 
+async function scenarioDemoSoak(browser, base) {
+  console.log('\n[S7] demo 长跑 31s（FR-8.1）');
+  const page = await openPage(browser, `${base}/index.html?demo=1`);
+  await page.waitFor(`NeonSerpent.mode() === 'playing'`, 10000);
+  await sleep(31000);
+
+  const state = await page.eval(`({ mode: NeonSerpent.mode(), score: NeonSerpent.state().score, steps: NeonSerpent.state().eaten })`);
+  check('S7.1 demo 无输入 30s 仍存活', state.mode === 'playing', `mode=${state.mode}`);
+  check('S7.2 demo 30s 内得分 > 0', state.score > 0, `score=${state.score}`);
+  check('S7.3 demo 长跑控制台零 error', page.errors.length === 0, page.errors.join(' | '));
+
+  await page.close();
+}
+
 /* --------------------------------- 主流程 -------------------------------- */
 
 async function main() {
@@ -485,6 +499,7 @@ async function main() {
     await scenarioDemo(browser, base);
     await scenarioPauseVisibility(browser, base);
     await scenarioOgShot(browser, base);
+    if (process.argv.includes('--soak')) await scenarioDemoSoak(browser, base);
   } finally {
     browser.cdp.close();
     browser.child.kill();

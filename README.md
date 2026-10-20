@@ -45,7 +45,7 @@ python -m http.server 8000
 
 ## 测试与验收
 
-站点本身仍然零构建，下面这些只是开发期脚本（Node 18+，不需要装任何依赖）：
+站点本身仍然零构建，下面这些只是开发期脚本（Node 22+，不需要装任何依赖；`e2e` 用到 Node 内置的 `WebSocket`）：
 
 ```bash
 node --test "tests/*.test.mjs"   # 单测：规则 / 存档 / 埋点（AC-1，36 例）

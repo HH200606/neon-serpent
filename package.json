@@ -2,6 +2,9 @@
   "name": "neon-serpent",
   "version": "1.2.0",
   "private": true,
+  "engines": {
+    "node": ">=22"
+  },
   "description": "霓虹贪吃蛇 · 零依赖 Canvas 2D 小游戏（开发工具脚本，站点本身无构建）",
   "scripts": {
     "test": "node --test tests/*.test.mjs",

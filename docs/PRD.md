@@ -1,9 +1,9 @@
 ---
 doc_id: prd-neon-serpent
-version: 1.1.0
+version: 1.2.0
 status: approved-for-build
-supersedes: 1.0.0
-date: 2026-10-21
+supersedes: 1.1.0
+date: 2026-10-20
 owners: [HH200606]
 product: Neon Serpent / 霓虹贪吃蛇
 repo: https://github.com/HH200606/neon-serpent
@@ -31,9 +31,9 @@ priority_enum: [P0, P1, P2, P3]
 | :--- | :--- |
 | 是什么 | 零依赖、纯 Canvas 的霓虹风贪吃蛇：24×24 网格、连击倍率、金果实、合成音效、手机可玩 |
 | 给谁 | 碎片时间想玩一局的人；喜欢霓虹/复古视觉的人；会顺手看源码的前端同行 |
-| 解决什么 | 同类复刻普遍手感粗糙（跳格、无音效、手机不能玩、打开慢）——本作用固定步长+插值、合成音效、34KB 零外部请求来对冲 |
+| 解决什么 | 同类复刻普遍手感粗糙（跳格、无音效、手机不能玩、打开慢）——本作用固定步长+插值、合成音效、50KB 零外部请求来对冲 |
 | 成功标准 | 五局内「再来一局率」≥30%；分数中位数 100–250；中端机掉帧率 ≤5% |
-| 现在到哪一步 | 一期已上线；缺埋点与自动化测试，demo 模式会污染最高分（FR-7.4 待修） |
+| 现在到哪一步 | 一期已上线；一期补强的 P0 已收口：规则层可测试 + 单测、埋点本地聚合、demo 存档隔离、OG 修复；成绩卡（FR-11.3）与 V2 仍未做 |
 | 不做 | 账号、排行榜、多人、内购、关卡编辑器 |
 
 ---
@@ -67,6 +67,7 @@ priority_enum: [P0, P1, P2, P3]
 | v0.9 | 2026-10-19 | 连击、金果实、音效、手机操作、演示模式 | HH200606 |
 | v1.0 | 2026-10-20 | 上线并定稿 | HH200606 |
 | **v1.1** | 2026-10-21 | 按评审意见重写：补决策规则与止损线、竞品观测表、可测试性需求（FR-0）、demo 存档隔离（FR-7.4，缺陷）、OG 分享（FR-11.1）；修正样本量与可访问性表述 | HH200606 |
+| **v1.2** | 2026-10-20 | 一期补强 P0 落地：FR-0 规则层与 36 例单测、FR-7.4 缺陷修复、第 11 节埋点本地聚合（FR-8.2）、OG 图改绝对地址（FR-11.1）、FR-6.3 暂停挂音、FR-10.5 可访问性边界；AC-1 命令改为 glob（Node 24 不接受目录参数）；新增 `tools/` 验收脚本 | HH200606 |
 
 ---
 
@@ -221,9 +222,9 @@ H0 是**假设，尚未验证**（见 1.3 的观测计划）。它成立与否�
 
 | ID | 需求 | 优先级 | 状态 | 验收标准 |
 | :--- | :--- | :--- | :--- | :--- |
-| FR-0.1 | 纯规则（移动、转向合法性、碰撞、计分、连击、速度曲线、果实生成）抽成无 DOM 依赖模块 | P0 | not-implemented | 可在 Node 下加载，不触碰 `window`/`document` |
-| FR-0.2 | 规则模块配单测，覆盖 T-1～T-7 | P0 | not-implemented | `node --test` 全绿，用例 ≥12 |
-| FR-0.3 | 渲染/音效副作用不得进入规则层 | P1 | partial | 规则层无 `ctx.` / `AudioContext` 引用 |
+| FR-0.1 | 纯规则（移动、转向合法性、碰撞、计分、连击、速度曲线、果实生成）抽成无 DOM 依赖模块 | P0 | implemented | 可在 Node 下加载，不触碰 `window`/`document`（`js/rules.js`） |
+| FR-0.2 | 规则模块配单测，覆盖 T-1～T-7 | P0 | implemented | `node --test "tests/*.test.mjs"` 全绿，36 例 |
+| FR-0.3 | 渲染/音效副作用不得进入规则层 | P1 | implemented | 规则层无 `ctx.` / `AudioContext` 引用 |
 
 ### 6.1 核心循环
 
@@ -279,7 +280,7 @@ H0 是**假设，尚未验证**（见 1.3 的观测计划）。它成立与否�
 | :--- | :--- | :--- | :--- | :--- |
 | FR-6.1 | 暂停保留局面与计时 | P0 | implemented | 恢复不跳步 |
 | FR-6.2 | 切后台自动暂停 | P1 | implemented | 返回时处于暂停 |
-| FR-6.3 | 暂停时挂起音频 | P2 | not-implemented | 暂停期间无音效残留 |
+| FR-6.3 | 暂停时挂起音频 | P2 | implemented | 暂停期间无音效残留（`AudioContext.suspend()`） |
 | FR-6.4 | 按钮图标与状态同步 | P2 | implemented | 图标切换正确 |
 
 ### 6.7 最高分与设置
@@ -289,7 +290,7 @@ H0 是**假设，尚未验证**（见 1.3 的观测计划）。它成立与否�
 | FR-7.1 | 最高分持久化并展示 | P1 | implemented | 刷新后保留 |
 | FR-7.2 | 静音状态持久化 | P2 | implemented | 刷新后保持 |
 | FR-7.3 | 禁用存储时不报错 | P1 | implemented | 异常被捕获，游戏继续 |
-| FR-7.4 | **演示模式不得写入最高分** | P0 | defect | `?demo=1` 结束后 `localStorage['neon-serpent:best']` 不变；当前 `award()`（每果实）与 `gameOver()` 均无条件写盘，会污染真实最高分 |
+| FR-7.4 | **演示模式不得写入最高分** | P0 | implemented | `?demo=1` 结束后 `localStorage['neon-serpent:best']` 不变，HUD 与内存里的最高分也保持真实值；由 `js/store.js` 统一拦截，`tools/e2e.mjs` 场景 S4 回归 |
 | FR-7.5 | 存储配额满时降级 | P2 | implemented | 写入失败仅丢存档，不影响对局 |
 
 ### 6.8 演示模式
@@ -297,7 +298,7 @@ H0 是**假设，尚未验证**（见 1.3 的观测计划）。它成立与否�
 | ID | 需求 | 优先级 | 状态 | 验收标准 |
 | :--- | :--- | :--- | :--- | :--- |
 | FR-8.1 | `?demo=1` 自动寻路持续得分 | P2 | implemented | 无输入 30s 分数 >0 且未死 |
-| FR-8.2 | 演示会话不参与统计 | P1 | not-implemented | 事件带 `demo=true` 且可过滤 |
+| FR-8.2 | 演示会话不参与统计 | P1 | implemented | 事件带 `demo=true`，`NeonStats.events()` 默认过滤 |
 
 ### 6.9 响应式与高 DPI
 
@@ -315,7 +316,7 @@ H0 是**假设，尚未验证**（见 1.3 的观测计划）。它成立与否�
 | FR-10.2 | 分数变化可被读屏感知 | P1 | implemented | 分数节点 `aria-live` |
 | FR-10.3 | 减少动效偏好下关闭抖动与大部分粒子 | P1 | implemented | `prefers-reduced-motion` 生效 |
 | FR-10.4 | 对比度：**仅 HUD 与控件**满足 AA | P2 | partial | 正文/HUD ≥4.5:1 |
-| FR-10.5 | 明确可访问性边界 | P1 | not-implemented | 文档与页脚声明"核心玩法为视觉向，canvas 不提供读屏替代" |
+| FR-10.5 | 明确可访问性边界 | P1 | implemented | 页脚与 README 声明"核心玩法为视觉向，canvas 不提供读屏替代" |
 
 > **修正说明（v1.1）**：v1.0 声称整体满足 WCAG AA，与事实不符——canvas 玩法对读屏用户本质不可玩。现限定为"HUD 与控件满足 AA"，并新增 FR-10.5 明确边界。
 
@@ -378,7 +379,7 @@ H0 是**假设，尚未验证**（见 1.3 的观测计划）。它成立与否�
 | :--- | :--- | :--- | :--- |
 | NFR-1 | 性能 | 掉帧率 ≤5% | 中端机：Android 4×A76 级（如 Pixel 6a / 骁龙 7 系）或 iPhone 12，最新 Chrome/Safari，冷启动后连玩 3 局采样 |
 | NFR-2 | 首屏 | 4G ≤600ms，本地 ≤150ms | Lighthouse mobile 或 `performance` 实测 |
-| NFR-3 | 包体 | 首屏 ≤60KB（当前 34KB） | html+css+js 字节和，禁用 gzip 计算 |
+| NFR-3 | 包体 | 首屏 ≤60KB（当前 50KB） | html+css+js 字节和，禁用 gzip 计算（`tools/check-size.mjs`） |
 | NFR-4 | 输入延迟 | ≤1 帧 | 10 次按键取中位帧差 |
 | NFR-5 | 可靠性 | 控制台零 error | 冷启动 + 3 局 + 切后台各一次 |
 | NFR-6 | 音频 | 峰值 ≤-12 dBFS，短时响度 ≤-18 LUFS | 分析节点抽样 |
@@ -411,7 +412,7 @@ playing ─切后台→ paused
 | 打开即切后台 | 返回时暂停 | 已实现 |
 | 棋盘填满 | 进入通关结算 | 未实现（FR-1.6） |
 | 存储禁用/配额满 | 仅丢存档 | 已实现 |
-| `?demo=1` 结束 | 不得改最高分 | 缺陷（FR-7.4） |
+| `?demo=1` 结束 | 不得改最高分 | 已实现（FR-7.4，e2e S4 回归） |
 
 ---
 
@@ -467,10 +468,11 @@ playing ─切后台→ paused
 | 层 | 实现 | 备注 |
 | :--- | :--- | :--- |
 | 渲染 | Canvas 2D，DPR ≤2.5，单 rAF 循环 | — |
-| 逻辑 | 固定步长累加器 + 插值 | 按 FR-0.1 抽纯模块 |
+| 逻辑 | `js/rules.js`：纯规则（时间与随机数由调用方注入） | 按 FR-0.1 抽出，Node 可测 |
 | 输入 | keydown + Pointer | — |
-| 音频 | 懒加载 AudioContext，振荡器 + 指数包络 | 手势后创建（NFR-7） |
-| 持久化 | localStorage（best/muted） | 异常捕获 |
+| 音频 | 懒加载 AudioContext，振荡器 + 指数包络 | 手势后创建（NFR-7），暂停挂起（FR-6.3） |
+| 持久化 | localStorage（best / muted / events） | 异常捕获；demo 不写 best |
+| 埋点 | `js/analytics.js`：本地环形缓冲 + 导出 JSON | 无第三方脚本 |
 | 发布 | GitHub Pages（main 根目录），无构建 | — |
 
 | ID | 测试用例 | 断言 |
@@ -506,10 +508,12 @@ playing ─切后台→ paused
 
 | ID | 命令 / 检查 | 通过条件 |
 | :--- | :--- | :--- |
-| AC-1 | `node --test tests/` | 全绿，用例 ≥12 |
-| AC-2 | 首屏体积脚本 | `html+css+js` ≤60KB |
-| AC-3 | demo 回归（T-7） | 结束前后 best 不变 |
-| AC-4 | 外链扫描 | 无第三方 http(s) 引用 |
+| AC-1 | `node --test "tests/*.test.mjs"` | 全绿，用例 ≥12（当前 36） |
+| AC-2 | `node tools/check-size.mjs` | `html+css+js` ≤60KB |
+| AC-3 | `node tools/e2e.mjs`（场景 S4） | 结束前后 best 不变 |
+| AC-4 | `node tools/check-links.mjs` | 无第三方 http(s) 引用 |
+
+> 说明：Node 24 的 `node --test <目录>` 会把目录当测试文件执行并失败，故 AC-1 用 glob。AC-3 由 `tools/e2e.mjs` 的无头浏览器场景覆盖，不只是静态检查。
 
 ### 14.2 人工（照步骤执行并记录）
 
@@ -528,9 +532,9 @@ playing ─切后台→ paused
 | 阶段 | 目标 | 依赖 | 状态 |
 | :--- | :--- | :--- | :--- |
 | M1 | 竞品观测表填完，判定 H0 | 1.3 表 | not-started |
-| M2 | 埋点 + 本地聚合导出 | 事件 schema | not-started |
-| M3 | FR-0 重构 + T-1～T-7 | 无 | not-started |
-| M4 | FR-7.4 修复 + AC-3 回归 | M3 | not-started |
+| M2 | 埋点 + 本地聚合导出 | 事件 schema | implemented |
+| M3 | FR-0 重构 + T-1～T-7 | 无 | implemented |
+| M4 | FR-7.4 修复 + AC-3 回归 | M3 | implemented |
 | M5 | OG 验收 + 成绩卡（FR-11.3） | 无 | partial |
 | M6 | 数据复盘，按 4.2 决策 | M2 数据 ≥2 周 | not-started |
 

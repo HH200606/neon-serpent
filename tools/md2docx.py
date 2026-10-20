@@ -14,7 +14,7 @@ import sys
 from docx import Document
 from docx.enum.section import WD_SECTION
 from docx.enum.table import WD_TABLE_ALIGNMENT
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
@@ -192,6 +192,66 @@ def fix_table_width(table):
     tblW.set(qn("w:w"), "5000")
 
 
+
+def strip_frontmatter(lines):
+    """跳过文档开头的 YAML 头（给 agent 读的那部分不进 Word）。"""
+    if lines and lines[0].strip() == "---":
+        for j in range(1, len(lines)):
+            if lines[j].strip() == "---":
+                return lines[j + 1:]
+    return lines
+
+
+def collect_toc(lines):
+    return [ln.strip()[3:].strip() for ln in lines if ln.strip().startswith("## ")]
+
+
+def add_toc(doc, entries):
+    if not entries:
+        return
+    doc.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
+    head = doc.add_paragraph()
+    hr = head.add_run("目录")
+    hr.bold = True
+    hr.font.size = Pt(13)
+    set_eastasia(hr, EASTASIA)
+    head.paragraph_format.space_before = Pt(10)
+    head.paragraph_format.space_after = Pt(6)
+    for e in entries:
+        q = doc.add_paragraph()
+        q.paragraph_format.left_indent = Cm(0.4)
+        q.paragraph_format.space_after = Pt(2)
+        rr = q.add_run(e)
+        rr.font.size = Pt(9.5)
+        rr.font.color.rgb = INK_SOFT
+        set_eastasia(rr, BODY_EASTASIA)
+    brk = doc.add_paragraph()
+    brk.add_run().add_break(WD_BREAK.PAGE)
+
+
+def add_image(doc, alt, path):
+    if not os.path.exists(path):
+        warn = doc.add_paragraph()
+        wr = warn.add_run("[缺图] " + alt + "：" + path)
+        wr.font.size = Pt(9)
+        wr.font.color.rgb = MUTED
+        set_eastasia(wr, BODY_EASTASIA)
+        return
+    pic = doc.add_paragraph()
+    pic.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    pic.paragraph_format.space_before = Pt(6)
+    pic.paragraph_format.space_after = Pt(2)
+    pic.add_run().add_picture(path, width=Cm(14))
+    if alt:
+        cap = doc.add_paragraph()
+        cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        cap.paragraph_format.space_after = Pt(10)
+        cr = cap.add_run(alt)
+        cr.font.size = Pt(8.5)
+        cr.font.color.rgb = MUTED
+        set_eastasia(cr, BODY_EASTASIA)
+
+
 def add_table(doc, rows):
     header, body = rows[0], rows[1:]
     table = doc.add_table(rows=1, cols=len(header))
@@ -235,6 +295,9 @@ def build():
     with open(SRC, encoding="utf-8") as fh:
         lines = fh.read().splitlines()
 
+    lines = strip_frontmatter(lines)
+    TOC = collect_toc(lines)
+
     doc = Document()
     section = doc.sections[0]
     section.page_width = Cm(21)
@@ -270,6 +333,20 @@ def build():
             run.font.size = Pt(8.5)
             run.font.color.rgb = INK_SOFT
             continue
+
+        # 目录占位
+        if stripped == "<!--toc-->":
+            add_toc(doc, TOC)
+            i += 1
+            continue
+
+        # 图片
+        if stripped.startswith("!["):
+            m = re.match(r"^!\[(.*?)\]\((.*?)\)$", stripped)
+            if m:
+                add_image(doc, m.group(1), os.path.join(os.path.dirname(SRC), m.group(2)))
+                i += 1
+                continue
 
         # 表格
         if stripped.startswith("|"):

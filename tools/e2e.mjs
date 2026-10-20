@@ -565,7 +565,11 @@ async function scenarioAudio(browser, base) {
   check('S8.12 取消静音后会发声', (await page2.eval('NeonSerpent.soundCount()')) >= 1);
 
   const master = await page2.eval('NeonSerpent.audioMaster()');
-  check('S8.13 音效经过 -12 dBFS 限幅器（NFR-6）', !!master && master.threshold === -12, JSON.stringify(master));
+  check('S8.13 音效经过 -12 dBFS 限幅（NFR-6）', !!master && master.ceiling === 0.25 && master.kind === 'clip', JSON.stringify(master));
+
+  // 真实 DSP 验证：用同一套限幅图离线渲染 3 个 0.13 叠加，峰值得落在 -12 dBFS 以内
+  const peak = await page2.eval('NeonSerpent.verifyLimiter()');
+  check('S8.14 叠加音效峰值 ≤ -12 dBFS（实测）', typeof peak === 'number' && peak <= 0.2512, `peak=${peak}`);
 
   await page2.close();
 }

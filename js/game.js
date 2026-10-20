@@ -274,6 +274,35 @@
 
   /* ------------------------------- 5. 音效 --------------------------------- */
 
+  // NFR-6：峰值 ≤ -12 dBFS ⇔ 线性振幅 ≤ 0.2512
+  const AUDIO_CEILING = 0.25;
+
+  /** 削波限幅曲线：±1 映射到 ±ceiling，中间保持线性（不改变单个音效的音量）。 */
+  function makeClipCurve(ceiling) {
+    const n = 1024;
+    const curve = new Float32Array(n);
+    for (let i = 0; i < n; i += 1) {
+      const x = (i / (n - 1)) * 2 - 1;
+      curve[i] = Math.max(-ceiling, Math.min(ceiling, x));
+    }
+    return curve;
+  }
+
+  /** master 链：所有音效 → 削波 → 扬声器。用 WaveShaper 而不是 DynamicsCompressor：
+      后者带补偿增益，叠加时的峰值反而会变大（实测 0.376 → 0.612）。 */
+  function buildMaster(ctx) {
+    const shaper = ctx.createWaveShaper();
+    shaper.curve = makeClipCurve(AUDIO_CEILING);
+    shaper.oversample = 'none';
+    shaper.connect(ctx.destination);
+    return shaper;
+  }
+
+  function installMaster() {
+    if (!audio.ctx || audio.master) return;
+    audio.master = buildMaster(audio.ctx);
+  }
+
   function ensureAudio() {
     if (!audio.unlocked) return null; // NFR-7：首次手势后才创建
     if (!audio.ctx) {
@@ -305,19 +334,6 @@
       }
     }
     return audio.ctx;
-  }
-
-  /** 所有音效先过限幅器再进扬声器，保证峰值不超过 NFR-6 的 -12 dBFS。 */
-  function installMaster() {
-    if (!audio.ctx || audio.master) return;
-    const comp = audio.ctx.createDynamicsCompressor();
-    comp.threshold.value = -12;
-    comp.knee.value = 0;
-    comp.ratio.value = 20;
-    comp.attack.value = 0.003;
-    comp.release.value = 0.25;
-    comp.connect(audio.ctx.destination);
-    audio.master = comp;
   }
 
   function suspendAudio() {
@@ -792,6 +808,31 @@
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
+  /** 离线复算限幅效果：3 个 0.13 叠加 → 同一套 master 图 → 峰值。 */
+  async function verifyLimiter() {
+    const OC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    if (!OC) return null;
+
+    const oc = new OC(1, 48000, 48000);
+    const master = buildMaster(oc);
+    for (let i = 0; i < 3; i += 1) {
+      const osc = oc.createOscillator();
+      const amp = oc.createGain();
+      osc.type = 'triangle';
+      osc.frequency.value = 660 + i * 200;
+      amp.gain.value = 0.13;
+      osc.connect(amp).connect(master);
+      osc.start(0.05);
+      osc.stop(0.6);
+    }
+
+    const buffer = await oc.startRendering();
+    const data = buffer.getChannelData(0);
+    let peak = 0;
+    for (let i = 0; i < data.length; i += 1) peak = Math.max(peak, Math.abs(data[i]));
+    return Math.round(peak * 10000) / 10000;
+  }
+
   // 本地聚合 → 手动导出（PRD 11.2）；默认过滤 demo 事件（FR-8.2）
   window.NeonStats = {
     events: (opts) => analytics.readAll(opts || {}),
@@ -813,10 +854,9 @@
     soundCount: () => audio.played,
     muted: () => audio.muted,
     audioBlocked: () => audio.blocked,
-    // 诊断用：限幅器在不在、阈值是多少（NFR-6 峰值上限 -12 dBFS）
-    audioMaster: () => (audio.master
-      ? { threshold: audio.master.threshold.value, ratio: audio.master.ratio.value }
-      : null),
+    // 诊断用：限幅器在不在、上限是多少（NFR-6 峰值 -12 dBFS）
+    audioMaster: () => (audio.master ? { kind: 'clip', ceiling: AUDIO_CEILING } : null),
+    verifyLimiter,
   };
 
   /* ---------------------------- 9. 演示模式 --------------------------------- */
@@ -903,7 +943,7 @@
   analytics.track('page_view', { ref: document.referrer || '', demo: isDemo });
 
   // 一眼确认跑的是哪一版：线上缓存/旧标签页是这次排查的坑
-  console.info('[neon-serpent] build v1.2 · audio2 · sfx=0.13-0.20 · limiter=-12dBFS');
+  console.info('[neon-serpent] build v1.2 · audio3 · sfx=0.13-0.20 · limiter=clip@-12dBFS');
 
   if (isDemo) startGame();
 

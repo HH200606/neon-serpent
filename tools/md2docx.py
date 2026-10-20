@@ -308,7 +308,19 @@ def main(argv=None):
 def build():
     global FOOTER
     with open(SRC, encoding="utf-8") as fh:
-        lines = fh.read().splitlines()
+        raw = fh.read()
+    lines = raw.splitlines()
+
+    # 防护：被 Markdown 格式化工具重排过的文件会丢掉 <!--toc-->，Word 版会静默没有目录
+    if "\n<!--toc-->" not in raw:
+        raise SystemExit(
+            f"{SRC} 里找不到 <!--toc--> 标记（文件可能被外部格式化工具重排过）。"
+            "请先恢复该标记再生成 Word，否则目录会静默丢失。"
+        )
+    if "\\---" in raw:
+        raise SystemExit(
+            f"{SRC} 的 frontmatter 被转义成了 \\---（YAML 头会失效）。请先恢复。"
+        )
 
     meta = read_frontmatter(lines)
     lines = strip_frontmatter(lines)

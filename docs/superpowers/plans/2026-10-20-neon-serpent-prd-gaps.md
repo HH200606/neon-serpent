@@ -280,3 +280,12 @@ Run: `node tools/check-links.mjs` → 当前 `index.html` 的 `og:image` 是相�
 - `createStore` 没做计划里的 `prefix` 选项（键名固定，测试也用不到）。
 - e2e 多了 S7（`node tools/e2e.mjs --soak`）验证 FR-8.1：demo 无输入 31 秒仍存活且得分 > 0。
 - 代码评审后追加修复：`run_end.isNewBest` 改为与开局记录比较（原先恒为 false）、暂停冻结连击窗口与金果实寿命（`NeonRules.shiftTimers`）、暂停期间不唤醒音频且静音冷启动不建实例、埋点 `readAll()`/`exportJson()` 默认过滤 demo、`frame_stats` 从 1s 降到 10s 一次、`check-links` 补协议相对地址、`safeStorage` 改为只读探测。
+
+### 音效专项（同日追加）
+
+用户两次报「没有声音」，前两次修复都没生效，过程值得记下来：
+
+- **第一次修复无效的真实原因不是代码**：用户一直在玩线上 `hh200606.github.io` 那一版，本地 `main` 领先 origin 10 个提交从未推送。证据：用户 Edge 的 localStorage 只有 `neon-serpent:best`（值 10→110）与 `:muted`，且都挂在 `_https://hh200606.github.io` 下；新代码开页必写的 `neon-serpent:events` 一次都没出现。结论：先加构建标记（页脚 `v1.2` + `console.info`）并 `git push`，再谈其它。
+- **限幅器写错了**：Chrome 的 `DynamicsCompressor` 带补偿增益，3 个 0.13 音效叠加时峰值从 0.376 被抬到 **0.612**（OfflineAudioContext 实测），反而违反 NFR-6。改为 `WaveShaper` 硬削波到 ±0.25（-12 dBFS），并把同一套 master 图开放为 `NeonSerpent.verifyLimiter()`，e2e S8.14 直接断言离线渲染峰值 ≤0.2512。
+- **浏览器自行挂起上下文**后，原先只有「下一次发声」才会 resume；现在任意按键/指针按下都会尝试唤醒（静音与暂停时不唤醒）。
+- 线上复测：削波版运行峰值 0.1816，未静音、上下文 running。
